@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><title>Игры</title><link rel="stylesheet" href="/static/css/style.css"></head>
+<body>
+    <div class="app">
+        <div class="nav">
+            <a href="/" class="nav-link">💬</a>
+            <div class="nav-link active game-link">🎮</div>
+        </div>
+        <div class="main" style="flex-direction:column">
+            <div class="header">Игровой Хаб</div>
+            <div class="gh-grid" id="game-list" style="padding:20px;display:flex;gap:20px;flex-wrap:wrap"></div>
+            <iframe id="game-frame" style="flex:1;border:none;display:none" src=""></iframe>
+            <button id="close-game" style="display:none;position:absolute;top:10px;right:10px;padding:10px;background:red;color:white;border:none;border-radius:5px;cursor:pointer">Закрыть</button>
+        </div>
+    </div>
+    <script>
+        fetch('/api/games').then(r=>r.json()).then(d => {
+            d.games.forEach(g => {
+                const div = document.createElement('div');
+                div.style.background = '#1e1e1e'; div.style.padding = '20px'; div.style.borderRadius = '10px'; div.style.cursor = 'pointer';
+                div.innerHTML = `<h3>${g.title}</h3>`;
+                div.onclick = () => {
+                    document.getElementById('game-list').style.display='none';
+                    const fr = document.getElementById('game-frame');
+                    fr.style.display='block'; fr.src = g.iframe_src;
+                    document.getElementById('close-game').style.display='block';
+                };
+                document.getElementById('game-list').appendChild(div);
+            });
+        });
+        document.getElementById('close-game').onclick = () => {
+            document.getElementById('game-frame').style.display='none'; document.getElementById('game-frame').src='';
+            document.getElementById('game-list').style.display='flex';
+            document.getElementById('close-game').style.display='none';
+        };
+    </script>
+</body>
+</html>
