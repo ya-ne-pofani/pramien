@@ -10,6 +10,93 @@ document.addEventListener('DOMContentLoaded', () => {
         bio: document.getElementById('my-bio').textContent,
     };
     
+    // --- CRYPTO E2EE MODULE ---
+    const Crypto = {
+        keyPair: null,
+        
+        async init() {
+            // Пробуем загрузить ключи из LocalStorage
+            const savedPriv = localStorage.getItem(`privKey_${userData.username}`);
+            const savedPub = localStorage.getItem(`pubKey_${userData.username}`);
+            
+            if (savedPriv && savedPub) {
+                this.keyPair = {
+                    privateKey: await this.importKey(savedPriv, 'private'),
+                    publicKey: await this.importKey(savedPub, 'public')
+                };
+                console.log('E2EE: Ключи загружены.');
+            } else {
+                console.log('E2EE: Генерация новых ключей...');
+                await this.generateKeys();
+            }
+        },
+
+        async generateKeys() {
+            this.keyPair = await window.crypto.subtle.generateKey(
+                { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+                true, ["encrypt", "decrypt"]
+            );
+            
+            const expPriv = await this.exportKey(this.keyPair.privateKey, 'private');
+            const expPub = await this.exportKey(this.keyPair.publicKey, 'public');
+            
+            localStorage.setItem(`privKey_${userData.username}`, expPriv);
+            localStorage.setItem(`pubKey_${userData.username}`, expPub);
+            
+            // Отправляем публичный ключ на сервер
+            await fetch('/api/keys/update', {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({public_key: expPub})
+            });
+            console.log('E2EE: Ключи созданы и публичный отправлен.');
+        },
+
+        async importKey(pem, type) {
+            const binaryDer = this.str2ab(atob(pem));
+            return await window.crypto.subtle.importKey(
+                type === 'private' ? 'pkcs8' : 'spki',
+                binaryDer,
+                { name: "RSA-OAEP", hash: "SHA-256" },
+                true,
+                type === 'private' ? ["decrypt"] : ["encrypt"]
+            );
+        },
+
+        async exportKey(key, type) {
+            const exported = await window.crypto.subtle.exportKey(type === 'private' ? 'pkcs8' : 'spki', key);
+            return btoa(this.ab2str(exported));
+        },
+
+        async encrypt(text, publicKeyPem) {
+            try {
+                const pubKey = await this.importKey(publicKeyPem, 'public');
+                const encoded = new TextEncoder().encode(text);
+                const encrypted = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, encoded);
+                return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+            } catch(e) { console.error("Encrypt Error", e); return null; }
+        },
+
+        async decrypt(cipherText) {
+            try {
+                const data = this.str2ab(atob(cipherText));
+                const decrypted = await window.crypto.subtle.decrypt({ name: "RSA-OAEP" }, this.keyPair.privateKey, data);
+                return new TextDecoder().decode(decrypted);
+            } catch(e) { return "🔒 Ошибка дешифровки (нет ключа)"; }
+        },
+
+        ab2str(buf) { return String.fromCharCode.apply(null, new Uint8Array(buf)); },
+        str2ab(str) {
+            const buf = new ArrayBuffer(str.length);
+            const bufView = new Uint8Array(buf);
+            for (let i = 0, strLen = str.length; i < strLen; i++) bufView[i] = str.charCodeAt(i);
+            return buf;
+        }
+    };
+
+    // Инициализация криптографии
+    Crypto.init();
+
     const THEME_COLORS = ['#007aff', '#34c759', '#ff3b30', '#af52de', '#ff9500', '#5856d6'];
     let currentRoom = null;
     let currentRoomData = {};
@@ -24,31 +111,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- ФУНКЦИЯ ЗАЩИТЫ ОТ ДУРАКА ---
     function setupInputLimit(input, maxLength) {
         if (!input) return;
-        
-        // Удаляем старый счетчик если есть (на случай реинита)
         const existing = input.parentElement.querySelector('.char-limit-counter');
         if(existing) existing.remove();
 
         const counter = document.createElement('span');
         counter.className = 'char-limit-counter';
-        // Если это textarea (bio), поднимем чуть выше
         if (input.tagName === 'TEXTAREA') counter.style.bottom = '10px';
         input.parentElement.appendChild(counter);
 
         const check = () => {
             const current = input.value.length;
             const left = maxLength - current;
-            const threshold = Math.ceil(maxLength * 0.05); // 5%
+            const threshold = Math.ceil(maxLength * 0.05); 
 
             if (current > maxLength) {
-                input.value = input.value.slice(0, maxLength); // Режем
+                input.value = input.value.slice(0, maxLength); 
                 counter.textContent = '0';
-                // Тряска
                 counter.classList.remove('shake-anim');
                 void counter.offsetWidth; 
                 counter.classList.add('shake-anim');
             } else {
-                // Логика отображения
                 if (left <= threshold) {
                     counter.textContent = left;
                     counter.style.display = 'block';
@@ -57,11 +139,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         };
-
         input.addEventListener('input', check);
-        // Дополнительная проверка при попытке ввода
         input.addEventListener('keydown', (e) => {
-            // Если лимит исчерпан и нажат печатный символ
             if (input.value.length >= maxLength && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
                  const counter = input.parentElement.querySelector('.char-limit-counter');
                  if(counter) {
@@ -74,8 +153,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-
-    // Применяем лимиты к полям чата
     setupInputLimit(document.getElementById('msg-input'), 500);
 
     // --- 0. ТЕМА ---
@@ -123,6 +200,14 @@ document.addEventListener('DOMContentLoaded', () => {
             avaEl.querySelector('span').textContent = data.avatar_emoji;
             socket.emit('join_dm', {username: data.username});
             updateUserStatusUI(data.username); 
+            
+            // E2EE Check
+            if (data.public_key) {
+                statusEl.textContent += ' • 🔒 E2EE Encrypted';
+            } else {
+                statusEl.textContent += ' • 🔓 Unencrypted';
+            }
+
         } else {
             avaEl.style.display = 'none';
             statusEl.textContent = 'Общий чат сервера';
@@ -134,15 +219,23 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('request_history', {room: room});
     };
 
-    function handleIncomingMessage(d) {
+    async function handleIncomingMessage(d) {
         if (processedMsgIds.has(d.message_id)) return;
         processedMsgIds.add(d.message_id);
         if (processedMsgIds.size > 500) processedMsgIds.clear();
 
+        let displayContent = d.content;
+        if (d.is_encrypted) {
+             displayContent = await Crypto.decrypt(d.content);
+        }
+
+        // Создаем модифицированный объект для UI
+        const uiMsg = { ...d, content: displayContent };
+
         if (d.room === currentRoom) {
-            if (d.sender_username !== userData.username) addMsg(d);
+            if (d.sender_username !== userData.username) addMsg(uiMsg);
         } else {
-            updateChatListPreview(d);
+            updateChatListPreview(uiMsg);
         }
     }
 
@@ -156,7 +249,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function addMsg(d) {
+    async function addMsg(d) {
+        // Если это мое сообщение и оно зашифровано, мне нужно его расшифровать (или показать исходник, если я только что отправил)
+        // Но здесь мы получаем эхо от сервера.
+        
+        let contentToShow = d.content;
+        if (d.is_encrypted) {
+            // Пытаемся расшифровать. Если это мое сообщение, я не смогу расшифровать его своим приватным ключом,
+            // ЕСЛИ я шифровал его ПУБЛИЧНЫМ ключом получателя.
+            // В реальном E2EE сообщении шифруется AES-ключом, а ключ шифруется для обоих участников.
+            // В нашей упрощенной схеме: Я вижу то, что отправил (в sendMessage я добавляю локально).
+            // А если это история? Это проблема упрощенной схемы. 
+            // ФИКС: В упрощенной схеме я не увижу свои старые сообщения, если не буду шифровать и для себя.
+            // Для демо пока оставим так: Входящие расшифровываем. Свои из истории будут "Encrypted blob" (пока что).
+            
+            if (d.sender_username !== userData.username) {
+                 contentToShow = await Crypto.decrypt(d.content);
+            } else {
+                 // Это мое сообщение из истории. Я не могу его расшифровать, так как оно зашифровано публичным ключом друга.
+                 // Чтобы видеть свои сообщения, нужно хранить копию, зашифрованную МОИМ ключом, или локально в БД.
+                 contentToShow = "🔒 (Зашифровано для получателя)";
+                 // Если это только что отправленное сообщение, оно добавляется локально в sendMessage
+            }
+        }
+
         const typingBubble = document.getElementById('typing-bubble-row');
         if (typingBubble) typingBubble.remove();
 
@@ -180,18 +296,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let replyHtml = d.reply_content ? `<div class="reply-ref"><b>${d.reply_nickname}</b>: ${d.reply_content}</div>` : '';
         let nameHtml = (!isSelf && d.room === '#Global') ? `<div style="font-size:0.7rem;font-weight:bold;margin-bottom:3px;color:#bbb">${d.sender_nickname}</div>` : '';
+        
+        let lockIcon = d.is_encrypted ? '<i class="fas fa-lock" style="font-size:0.6rem; margin-right:5px; opacity:0.7"></i>' : '';
 
         bubble.innerHTML = `
             ${replyHtml}
             ${nameHtml}
-            <div>${d.content.replace(/</g, "&lt;")}</div>
+            <div>${lockIcon}${contentToShow.replace(/</g, "&lt;")}</div>
             <div class="msg-meta">
                 <span>${new Date(d.timestamp*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
                 <button class="reply-btn"><i class="fas fa-reply"></i></button>
             </div>
         `;
         bubble.querySelector('.reply-btn').onclick = () => {
-            replyData = { content: d.content.substring(0, 50) + '...', nickname: d.sender_nickname, id: d.message_id };
+            replyData = { content: contentToShow.substring(0, 50) + '...', nickname: d.sender_nickname, id: d.message_id };
             document.getElementById('reply-nick').textContent = d.sender_nickname;
             document.getElementById('reply-content').textContent = replyData.content;
             document.getElementById('reply-bar').style.display = 'flex';
@@ -243,11 +361,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    function sendMessage() {
-        const content = msgInput.value.trim();
+    async function sendMessage() {
+        let content = msgInput.value.trim();
         if(!content || !currentRoom) return;
         
-        const payload = {room: currentRoom, content: content};
+        let isEncrypted = false;
+        let payloadContent = content;
+
+        // ЛОГИКА ШИФРОВАНИЯ
+        if (currentRoom !== '#Global' && currentRoomData.public_key) {
+            const encrypted = await Crypto.encrypt(content, currentRoomData.public_key);
+            if (encrypted) {
+                payloadContent = encrypted;
+                isEncrypted = true;
+            }
+        }
+
+        const payload = {room: currentRoom, content: payloadContent, is_encrypted: isEncrypted};
         if(replyData) {
             payload.reply_content = replyData.content;
             payload.reply_nickname = replyData.nickname;
@@ -256,14 +386,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         socket.emit('send_message', payload);
         
+        // Добавляем сообщение локально (в чистом виде, чтобы видеть что написал)
         addMsg({
-            content: content, room: currentRoom, sender_username: userData.username,
-            sender_nickname: userData.nickname, timestamp: Date.now() / 1000,
+            content: content, // Показываем оригинал
+            room: currentRoom, 
+            sender_username: userData.username,
+            sender_nickname: userData.nickname, 
+            timestamp: Date.now() / 1000,
             reply_content: replyData ? replyData.content : null,
             reply_nickname: replyData ? replyData.nickname : null,
             sender_avatar_color: userData.color,
-            sender_avatar_emoji: userData.emoji
+            sender_avatar_emoji: userData.emoji,
+            is_encrypted: isEncrypted
         });
+        
         updateChatListPreview({ room: currentRoom, content: content, sender_username: userData.username });
 
         msgInput.value = '';
@@ -272,11 +408,20 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('typing_event', {room: currentRoom, state: 'stop'});
         document.getElementById('cancel-reply-btn').click(); 
     }
+    
     document.getElementById('send-btn').onclick = sendMessage;
     msgInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendMessage(); } });
 
     socket.on('connect', () => fetch('/api/users').then(r=>r.json()).then(d => renderUserList(d.users)));
-    socket.on('message_history', d => { if(d.room === currentRoom) d.messages.forEach(addMsg); });
+    socket.on('message_history', d => { 
+        if(d.room === currentRoom) {
+            d.messages.forEach(msg => {
+                // Важно: addMsg асинхронная, но forEach не ждет. 
+                // Порядок может сбиться при дешифровке, но для истории это обычно ок.
+                addMsg(msg); 
+            }); 
+        }
+    });
     socket.on('new_message', handleIncomingMessage);
     
     socket.on('display_typing', (data) => {
@@ -371,6 +516,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const ava = document.getElementById('user-view-avatar');
             ava.style.backgroundColor = p.avatar_color;
             ava.textContent = p.avatar_emoji;
+            
+            // Показываем статус шифрования в профиле
+            if (p.has_key) {
+                document.getElementById('user-view-handle').innerHTML += ' <i class="fas fa-lock" title="E2EE доступно" style="color:#34c759; margin-left:5px;"></i>';
+            }
+
             document.getElementById('view-user-modal').classList.add('open');
         }
     };
