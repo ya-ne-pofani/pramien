@@ -7,7 +7,6 @@ window.closeChat = function() {
     window.currentRoomData = {};
 };
 
-// Заглушки, будут заполнены ниже
 window.showUserProfile = null;
 window.openChat = null; 
 
@@ -22,12 +21,16 @@ document.addEventListener('DOMContentLoaded', () => {
         color: appData?.dataset.color || '#555',
         emoji: appData?.dataset.emoji || '👤',
         bio: appData?.dataset.bio || '',
-        tags: []
+        tags: [],
+        tempColor: null,
+        tempEmoji: null
     };
     try {
         const tagsStr = appData?.dataset.tags;
         if(tagsStr && tagsStr !== 'None') userData.tags = JSON.parse(tagsStr);
     } catch(e) { console.error("Tags parse error:", e); }
+
+    console.log("USER DATA LOADED:", userData);
 
     // 2. ИНИЦИАЛИЗАЦИЯ
     const socket = io();
@@ -58,7 +61,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const st = document.getElementById('subtitle-text');
         if(st) { st.classList.add('anim-block-fly'); st.style.animationDelay = '1.0s'; }
     } catch(e) { console.warn("Animation failed", e); }
-
 
     // 4. ХЕЛПЕРЫ (Теги, Счетчик)
     function getTagsHtml(tags) {
@@ -111,6 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.openChat = (room, data) => {
+        console.log("OPENING CHAT:", room, data);
         document.getElementById('chat-window').classList.remove('empty');
         window.currentRoom = room;
         socket.emit('join', {room: room}); 
@@ -148,7 +151,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 actualAva.onclick = null; actualInfo.onclick = null;
                 actualAva.style.cursor = 'default'; actualInfo.style.cursor = 'default';
             }
-        } else { actualAva.style.display = 'none'; document.getElementById('chat-status').textContent = 'Общий чат'; actualAva.onclick = null; actualInfo.onclick = null; }
+        } else { 
+            actualAva.style.display = 'none'; 
+            document.getElementById('chat-status').textContent = 'Общий чат'; 
+            actualAva.onclick = null; 
+            actualInfo.onclick = null; 
+        }
 
         unreadCounts[room] = 0; updateUnread();
         socket.emit('request_history', {room: room});
@@ -201,52 +209,77 @@ document.addEventListener('DOMContentLoaded', () => {
         return el;
     }
 
+    // ФУНКЦИЯ addMsg
     function addMsg(d) {
-        if (!d || !d.content) { console.warn("Skipping empty message:", d); return; }
+        if (!d || !d.content) { 
+            console.warn("Skipping empty message:", d); 
+            return; 
+        }
         
         const list = document.getElementById('msgs');
+        if (!list) {
+            console.error("msgs container not found!");
+            return;
+        }
+
         const row = document.createElement('div'); 
         const isSelf = d.sender_username === userData.username;
         row.className = `msg-row ${isSelf ? 'self' : 'other'}`;
         
         let nameHtml = '';
         if (!isSelf && (window.currentRoom === '#Global' || currentRoomData.type === 'group')) {
+            const senderTags = d.sender_tags || [];
             nameHtml = `<div style="font-size:0.7rem;font-weight:bold;margin-bottom:3px;color:#bbb;display:flex;align-items:center; cursor:pointer;" 
                 onclick="window.showUserProfile('${d.sender_username}')">
-                ${d.sender_nickname || 'User'} ${getTagsHtml(d.sender_tags)}
+                ${d.sender_nickname || 'User'} ${getTagsHtml(senderTags)}
             </div>`;
         }
         
         let replyHtml = d.reply_content ? `<div class="reply-ref"><b>${d.reply_nickname || 'Unknown'}</b>: ${d.reply_content}</div>` : '';
         
+        if(!isSelf) {
+            const ava = document.createElement('div'); 
+            ava.className = 'msg-ava';
+            ava.style.backgroundColor = d.sender_avatar_color || '#444'; 
+            ava.textContent = d.sender_avatar_emoji || '👤';
+            ava.onclick = () => window.showUserProfile(d.sender_username);
+            ava.style.cursor = 'pointer';
+            row.appendChild(ava);
+        }
+        
         const bubble = document.createElement('div');
         bubble.className = 'msg-bubble';
-        bubble.innerHTML = `${replyHtml}${nameHtml}<div>${d.content}</div><div class="msg-meta"><span>${new Date(d.timestamp*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>`;
         
-        // Аватарка для не-своих сообщений
-        if(!isSelf) {
-            const ava = document.createElement('div'); ava.className='msg-ava';
-            ava.style.backgroundColor=d.sender_avatar_color || '#444'; 
-            ava.textContent=d.sender_avatar_emoji || '👤';
-            ava.onclick = () => window.showUserProfile(d.sender_username);
-            ava.style.cursor='pointer';
-            
-            // ВАЖНОЕ ИСПРАВЛЕНИЕ: Добавляем аватар, затем пузырь. CSS сделает их в ряд.
-            row.appendChild(ava); 
-        } 
+        const timestamp = d.timestamp || Date.now() / 1000;
+        const time = new Date(timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         
-        row.appendChild(bubble); // Пузырь всегда добавляется
+        bubble.innerHTML = `
+            ${replyHtml}
+            ${nameHtml}
+            <div>${d.content}</div>
+            <div class="msg-meta">
+                <span>${time}</span>
+            </div>
+        `;
         
-        const btn = document.createElement('button'); btn.className='reply-btn'; btn.innerHTML='<i class="fas fa-reply"></i>';
-        btn.onclick = () => {
-            replyData = {content: d.content.substring(0,50)+'...', nickname: d.sender_nickname, id: d.message_id};
-            document.getElementById('reply-bar').style.display='flex';
+        const replyBtn = document.createElement('button'); 
+        replyBtn.className = 'reply-btn'; 
+        replyBtn.innerHTML = '<i class="fas fa-reply"></i>';
+        replyBtn.onclick = () => {
+            replyData = {
+                content: d.content.substring(0,50) + '...', 
+                nickname: d.sender_nickname, 
+                id: d.message_id
+            };
+            document.getElementById('reply-bar').style.display = 'flex';
             document.getElementById('reply-nick').textContent = d.sender_nickname;
             document.getElementById('reply-content').textContent = replyData.content;
         };
-        bubble.querySelector('.msg-meta').appendChild(btn);
+        bubble.querySelector('.msg-meta').appendChild(replyBtn);
 
-        list.appendChild(row); list.scrollTop = list.scrollHeight;
+        row.appendChild(bubble);
+        list.appendChild(row);
+        list.scrollTop = list.scrollHeight;
     }
 
     // SEND & TYPING
@@ -254,21 +287,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const inp = document.getElementById('msg-input');
         const content = inp.value.trim();
         if(!content || !window.currentRoom) return;
+        
         const p = {room: window.currentRoom, content};
-        if(replyData) { p.reply_content=replyData.content; p.reply_nickname=replyData.nickname; p.reply_to_id=replyData.id; }
+        if(replyData) { 
+            p.reply_content = replyData.content; 
+            p.reply_nickname = replyData.nickname; 
+            p.reply_to_id = replyData.id; 
+        }
         socket.emit('send_message', p);
-        inp.value = ''; replyData = null; document.getElementById('reply-bar').style.display='none';
+        inp.value = ''; 
+        replyData = null; 
+        document.getElementById('reply-bar').style.display = 'none';
     }
-    document.getElementById('send-btn').onclick = sendMessage;
-    document.getElementById('msg-input').addEventListener('keypress', e => { if(e.key==='Enter') sendMessage(); });
     
-    // TYPING FIX
+    document.getElementById('send-btn').onclick = sendMessage;
+    document.getElementById('msg-input').addEventListener('keypress', e => { 
+        if(e.key === 'Enter') sendMessage(); 
+    });
+    
+    // TYPING
     const msgInput = document.getElementById('msg-input');
-    let isTyping = false; let pauseTimer = null;
+    let isTyping = false; 
+    let pauseTimer = null;
     msgInput.addEventListener('input', () => {
         if (window.currentRoom === '#Global' || !window.currentRoom) return;
         if (msgInput.value.length > 0) {
-            if (!isTyping) { isTyping = true; socket.emit('typing_event', {room: window.currentRoom, state: 'typing'}); }
+            if (!isTyping) { 
+                isTyping = true; 
+                socket.emit('typing_event', {room: window.currentRoom, state: 'typing'}); 
+            }
             if (pauseTimer) clearTimeout(pauseTimer);
             pauseTimer = setTimeout(() => socket.emit('typing_event', {room: window.currentRoom, state: 'paused'}), 800);
         } else {
@@ -277,12 +324,17 @@ document.addEventListener('DOMContentLoaded', () => {
             socket.emit('typing_event', {room: window.currentRoom, state: 'stop'});
         }
     });
+    
     socket.on('display_typing', (data) => {
         if (data.room !== window.currentRoom || data.username === userData.username) return;
         const existing = document.getElementById('typing-row');
-        if (data.state === 'stop' || data.state === 'paused') { if(existing) existing.remove(); } else {
+        if (data.state === 'stop' || data.state === 'paused') { 
+            if(existing) existing.remove(); 
+        } else {
             if (!existing) {
-                const row = document.createElement('div'); row.id = 'typing-row'; row.className = 'msg-row other';
+                const row = document.createElement('div'); 
+                row.id = 'typing-row'; 
+                row.className = 'msg-row other';
                 row.innerHTML = `<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
                 document.getElementById('msgs').appendChild(row);
                 document.getElementById('msgs').scrollTop = document.getElementById('msgs').scrollHeight;
@@ -291,26 +343,93 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // SOCKET LISTENERS
+    socket.on('connect', () => {
+        console.log("Socket connected!");
+    });
+
     socket.on('new_message', d => {
-        if(processedMsgIds.has(d.message_id)) return; processedMsgIds.add(d.message_id);
+        if(processedMsgIds.has(d.message_id)) return;
+        processedMsgIds.add(d.message_id);
+        
         if(d.room !== window.currentRoom) {
             unreadCounts[d.room] = (unreadCounts[d.room] || 0) + 1;
             updateUnread();
-        } else addMsg(d);
+        } else {
+            addMsg(d);
+        }
     });
-    socket.on('message_history', d => { if(d.room === window.currentRoom && d.messages) d.messages.forEach(addMsg); });
-    socket.on('force_disconnect', d => { if(d.username === userData.username) location.reload(); });
+    
+    socket.on('message_history', d => { 
+        if(d.room === window.currentRoom && d.messages) {
+            d.messages.forEach(addMsg);
+        }
+    });
+    
+    socket.on('force_disconnect', d => { 
+        if(d.username === userData.username) location.reload(); 
+    });
 
-    // POPUP & SETTINGS & MODALS
+    // ===== ИСПРАВЛЕННЫЙ РАЗДЕЛ ПРОФИЛЯ =====
+    
+    // Функция инициализации пикеров
+    function initPopPickers() {
+        const cc = document.getElementById('pop-color-picker'); 
+        const ec = document.getElementById('pop-emoji-picker');
+        const THEME_COLORS = ['#007aff', '#34c759', '#ff3b30', '#af52de', '#ff9500', '#5856d6'];
+        const EMOJIS = ['😀','😎','👽','🤖','👻','🐱','🦊','🐸','🚀','🔥'];
+        
+        if(cc && cc.children.length === 0) {
+            THEME_COLORS.forEach(c => { 
+                const d = document.createElement('div'); 
+                d.style.backgroundColor = c; 
+                d.onclick = () => { 
+                    userData.tempColor = c; 
+                    const previewAva = document.getElementById('edit-preview-ava');
+                    if(previewAva) previewAva.style.backgroundColor = c;
+                    console.log("Color selected:", c);
+                }; 
+                cc.appendChild(d); 
+            });
+            
+            EMOJIS.forEach(e => { 
+                const d = document.createElement('div'); 
+                d.textContent = e; 
+                d.onclick = () => { 
+                    userData.tempEmoji = e; 
+                    const previewAva = document.getElementById('edit-preview-ava');
+                    if(previewAva) previewAva.textContent = e;
+                    console.log("Emoji selected:", e);
+                }; 
+                ec.appendChild(d); 
+            });
+            
+            const tp = document.getElementById('theme-picker');
+            if(tp) {
+                THEME_COLORS.forEach(c => { 
+                    const d = document.createElement('div'); 
+                    d.style.backgroundColor = c; 
+                    d.onclick = () => document.documentElement.style.setProperty('--primary', c); 
+                    tp.appendChild(d); 
+                });
+            }
+        }
+    }
+
+    // Открытие попапа профиля
     document.getElementById('my-avatar-btn').onclick = (e) => {
         e.stopPropagation();
         const pop = document.getElementById('profile-popover');
-        if(pop.style.display==='block') pop.style.display='none';
-        else {
+        if(pop.style.display === 'block') {
+            pop.style.display = 'none';
+        } else {
             pop.classList.add('open'); 
-            pop.style.display='block';
-            document.getElementById('popover-view').style.display='block';
-            document.getElementById('popover-edit').style.display='none';
+            pop.style.display = 'block';
+            
+            // Показываем режим просмотра
+            document.getElementById('popover-view').style.display = 'block';
+            document.getElementById('popover-edit').style.display = 'none';
+            
+            // Заполняем данные
             document.getElementById('pop-tags').innerHTML = getPillsHtml(userData.tags);
             document.getElementById('pop-nick').innerHTML = `${userData.nickname} ${getTagsHtml(userData.tags)}`;
             document.getElementById('pop-bio').textContent = userData.bio || 'Нет статуса';
@@ -320,55 +439,121 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
+    // Кнопка "Редактировать"
+    document.getElementById('pop-edit-btn').onclick = () => {
+        console.log("Opening edit mode");
+        
+        document.getElementById('popover-view').style.display = 'none';
+        document.getElementById('popover-edit').style.display = 'block';
+        
+        // Заполняем форму текущими данными
+        document.getElementById('edit-nick-in').value = userData.nickname;
+        document.getElementById('edit-handle-in').value = userData.handle;
+        document.getElementById('edit-bio-in').value = userData.bio || '';
+        
+        // Устанавливаем превью аватара
+        const previewAva = document.getElementById('edit-preview-ava');
+        previewAva.style.backgroundColor = userData.color;
+        previewAva.textContent = userData.emoji;
+        
+        // Сбрасываем временные значения
+        userData.tempColor = userData.color;
+        userData.tempEmoji = userData.emoji;
+        
+        // Инициализируем пикеры
+        initPopPickers();
+    };
+    
+    // Кнопка "Отмена"
+    document.getElementById('pop-cancel-btn').onclick = () => {
+        console.log("Canceling edit");
+        document.getElementById('popover-edit').style.display = 'none';
+        document.getElementById('popover-view').style.display = 'block';
+    };
+    
+    // Кнопка "Сохранить"
     document.getElementById('pop-save-btn').onclick = async () => {
+        console.log("Saving profile...");
+        
         const payload = { 
-            nickname: document.getElementById('edit-nick-in').value, 
-            handle: document.getElementById('edit-handle-in').value, 
-            bio: document.getElementById('edit-bio-in').value, 
+            nickname: document.getElementById('edit-nick-in').value.trim(), 
+            handle: document.getElementById('edit-handle-in').value.trim(), 
+            bio: document.getElementById('edit-bio-in').value.trim(), 
             color: userData.tempColor || userData.color, 
             emoji: userData.tempEmoji || userData.emoji 
         };
-        await fetch('/api/user/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         
-        userData.nickname = payload.nickname;
-        userData.handle = payload.handle;
-        userData.bio = payload.bio;
-        userData.color = payload.color;
-        userData.emoji = payload.emoji;
-
-        location.reload(); 
+        console.log("Payload:", payload);
+        
+        try {
+            const response = await fetch('/api/user/profile', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify(payload) 
+            });
+            
+            const result = await response.json();
+            console.log("Server response:", result);
+            
+            if (result.success) {
+                // Обновляем локальные данные
+                userData.nickname = payload.nickname;
+                userData.handle = payload.handle;
+                userData.bio = payload.bio;
+                userData.color = payload.color;
+                userData.emoji = payload.emoji;
+                
+                alert('Профиль обновлён!');
+                location.reload(); // Перезагружаем страницу
+            } else {
+                alert('Ошибка: ' + result.message);
+            }
+        } catch (err) {
+            console.error("Save error:", err);
+            alert('Ошибка сохранения: ' + err.message);
+        }
+    };
+    
+    // Кнопка "Выход"
+    document.getElementById('pop-logout-btn').onclick = async () => {
+        if(!confirm('Выйти из аккаунта?')) return;
+        await fetch('/api/auth/logout', {method: 'POST'});
+        window.location.href = '/login';
     };
 
-    document.getElementById('settings-btn').onclick = () => { document.getElementById('settings-modal').classList.add('open'); initPopPickers(); };
-    document.getElementById('cancel-reply-btn').onclick = () => { replyData=null; document.getElementById('reply-bar').style.display='none'; };
+    // Настройки
+    document.getElementById('settings-btn').onclick = () => { 
+        document.getElementById('settings-modal').classList.add('open'); 
+        initPopPickers(); 
+    };
     
-    function initPopPickers() {
-        const cc = document.getElementById('pop-color-picker'); const ec = document.getElementById('pop-emoji-picker');
-        const THEME_COLORS = ['#007aff', '#34c759', '#ff3b30', '#af52de', '#ff9500', '#5856d6'];
-        const EMOJIS = ['😀','😎','👽','🤖','👻','🐱','🦊','🐸','🚀','🔥'];
-        if(cc && cc.children.length === 0) {
-            THEME_COLORS.forEach(c => { const d = document.createElement('div'); d.style.backgroundColor = c; d.onclick = () => { userData.tempColor = c; document.getElementById('edit-preview-ava').style.backgroundColor = c; }; cc.appendChild(d); });
-            EMOJIS.forEach(e => { const d = document.createElement('div'); d.textContent = e; d.onclick = () => { userData.tempEmoji = e; document.getElementById('edit-preview-ava').textContent = e; }; ec.appendChild(d); });
-            const tp = document.getElementById('theme-picker');
-            if(tp) THEME_COLORS.forEach(c => { const d = document.createElement('div'); d.style.backgroundColor = c; d.onclick = () => document.documentElement.style.setProperty('--primary', c); tp.appendChild(d); });
-        }
-    }
+    // Отмена ответа
+    document.getElementById('cancel-reply-btn').onclick = () => { 
+        replyData = null; 
+        document.getElementById('reply-bar').style.display = 'none'; 
+    };
 
     // КРЕСТИКИ ЗАКРЫТИЯ
-    document.querySelectorAll('.close-btn').forEach(b => b.onclick = function(){ this.closest('.modal').classList.remove('open'); });
+    document.querySelectorAll('.close-btn').forEach(b => {
+        b.onclick = function() { 
+            this.closest('.modal').classList.remove('open'); 
+        };
+    });
     
-    // ДОПОЛНИТЕЛЬНЫЙ ЛИСЕНЕР ДЛЯ КЛИКА НА ТЕЛО МОДАЛА
+    // Закрытие попапа при клике вне его
     document.addEventListener('click', e => { 
         const pop = document.getElementById('profile-popover');
         const myAvatarBtn = document.getElementById('my-avatar-btn');
-        if(pop && !pop.contains(e.target) && myAvatarBtn && !myAvatarBtn.contains(e.target)) pop.style.display='none'; 
+        if(pop && !pop.contains(e.target) && myAvatarBtn && !myAvatarBtn.contains(e.target)) {
+            pop.style.display = 'none'; 
+        }
     });
     
     // Кнопка DM в чужом профиле
     document.getElementById('view-dm-btn').onclick = () => {
         if (!window.viewedProfileData) return;
         document.getElementById('view-user-modal').classList.remove('open');
-        const room = `${[userData.username, window.viewedProfileData.username].sort().join('_')}`;
+        const room = [userData.username, window.viewedProfileData.username].sort().join('_');
         const chatsTabBtn = document.querySelector('.nav-btn[data-tab="chats"]');
         if (chatsTabBtn) chatsTabBtn.click();
         window.openChat(room, window.viewedProfileData);

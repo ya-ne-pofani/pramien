@@ -83,11 +83,12 @@ def index():
     conn.close()
     if not user: session.pop('user', None); return redirect('/login')
     user_dict = dict(user)
-    user_dict['tags'] = get_user_tags(user['username']) # Важно для главной
+    user_dict['tags'] = get_user_tags(user['username'])
     return render_template('chat.html', user=user_dict)
 
 @app.route('/login')
 def login(): return render_template('login.html')
+
 @app.route('/register')
 def register(): return render_template('register.html')
 
@@ -137,12 +138,10 @@ def admin_users():
     conn.close()
     return jsonify(res)
 
-# СПИСОК ЗАБАНЕННЫХ
 @app.route('/api/admin/banned_users')
 def admin_banned_list():
     if 'admin_user' not in session: return jsonify({'error':401}), 401
     conn = get_db_connection()
-    # Берем только активные баны
     bans = conn.execute('SELECT b.*, u.nickname FROM bans b JOIN users u ON b.user_id = u.id WHERE b.expires_at > ?', (time.time(),)).fetchall()
     res = []
     for b in bans:
@@ -164,7 +163,6 @@ def admin_ban():
     socketio.emit('force_disconnect', {'username': u['username']})
     return jsonify({'success': True})
 
-# РАЗБАН
 @app.route('/api/admin/unban', methods=['POST'])
 def admin_unban():
     if 'admin_user' not in session: return jsonify({'error':401}), 401
@@ -174,7 +172,6 @@ def admin_unban():
     conn.commit(); conn.close()
     return jsonify({'success': True})
 
-# ТЕГИ
 @app.route('/api/admin/tags/list')
 def admin_get_tags_list():
     conn = get_db_connection()
@@ -187,7 +184,6 @@ def admin_assign_tag():
     if 'admin_user' not in session: return jsonify({'error':401}), 401
     d = request.json
     conn = get_db_connection()
-    # Если ID тега передан - используем, иначе создаем
     tag_id = d.get('tag_id')
     if not tag_id and d.get('name'):
         cur = conn.execute('INSERT INTO tags (name, emoji, is_special) VALUES (?, ?, ?)', (d['name'], d['emoji'], d.get('is_special', False)))
@@ -200,7 +196,7 @@ def admin_assign_tag():
     conn.close()
     return jsonify({'success': True})
 
-# ... (AUTH & CHAT API remain same, make sure to include updated get_chats with tags logic from previous step) ...
+# --- USER API ---
 @app.route('/api/chats')
 def get_chats():
     if 'user' not in session: return jsonify({'error': 'Unauthorized'}), 401
@@ -232,44 +228,102 @@ def get_profile_api(username):
     conn.close()
     return jsonify({'success':False})
 
-# ... (Login/Register/Socket endpoints - стандартные) ...
+# НОВЫЙ ЭНДПОИНТ ДЛЯ ОБНОВЛЕНИЯ ПРОФИЛЯ
+@app.route('/api/user/profile', methods=['POST'])
+def update_profile():
+    if 'user' not in session:
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 401
+    
+    data = request.json
+    username = session['user']
+    
+    try:
+        conn = get_db_connection()
+        
+        # Обновляем профиль пользователя
+        conn.execute('''
+            UPDATE users 
+            SET nickname = ?, handle = ?, bio = ?, avatar_color = ?, avatar_emoji = ?
+            WHERE username = ?
+        ''', (
+            data.get('nickname'),
+            data.get('handle'),
+            data.get('bio', ''),
+            data.get('color'),
+            data.get('emoji'),
+            username
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Profile updated'})
+    
+    except sqlite3.IntegrityError:
+        return jsonify({'success': False, 'message': 'Handle уже занят'}), 409
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+# --- AUTH API ---
 @app.route('/api/auth/login', methods=['POST'])
 def api_login():
     data = request.json
     conn = get_db_connection()
     user = conn.execute('SELECT * FROM users WHERE username = ?', (data['username'],)).fetchone()
     conn.close()
-    if user and check_password_hash(user['password'], data['password']): session['user'] = data['username']; return jsonify({'success': True, 'redirect': '/'})
-    return jsonify({'success': False, 'error': 'Error'}), 401
+    if user and check_password_hash(user['password'], data['password']): 
+        session['user'] = data['username']
+        return jsonify({'success': True, 'redirect': '/'})
+    return jsonify({'success': False, 'error': 'Неверный логин или пароль'}), 401
 
 @app.route('/api/auth/logout', methods=['POST'])
-def logout(): session.pop('user', None); return jsonify({'success': True, 'redirect': '/login'})
+def logout(): 
+    session.pop('user', None)
+    return jsonify({'success': True, 'redirect': '/login'})
 
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
     d = request.json
     conn = get_db_connection()
     try:
-        conn.execute('INSERT INTO users (username, password, nickname, handle, avatar_color, avatar_emoji, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', (d['username'], generate_password_hash(d['password']), d['nickname'], d['handle'], '#007aff', '👤', time.time()))
+        conn.execute('INSERT INTO users (username, password, nickname, handle, avatar_color, avatar_emoji, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+                     (d['username'], generate_password_hash(d['password']), d['nickname'], d['handle'], '#007aff', '👤', time.time()))
         conn.commit()
         conn.close()
         return jsonify({'success': True, 'redirect': '/login'})
-    except: return jsonify({'success': False}), 409
+    except:
+        return jsonify({'success': False, 'error': 'Логин или handle уже занят'}), 409
 
+# --- SOCKET.IO ---
 @socketio.on('join')
-def on_join(data): join_room(data['room'])
+def on_join(data): 
+    join_room(data['room'])
+
 @socketio.on('send_message')
 def handle_message(data):
     if 'user' not in session: return
     room, content = data['room'], data['content']
     sender = session['user']
     conn = get_db_connection()
-    cursor = conn.execute('INSERT INTO messages (room, sender_username, content, timestamp) VALUES (?, ?, ?, ?)', (room, sender, content, time.time()))
+    cursor = conn.execute('INSERT INTO messages (room, sender_username, content, timestamp) VALUES (?, ?, ?, ?)', 
+                         (room, sender, content, time.time()))
     conn.commit()
     u = conn.execute('SELECT nickname, avatar_color, avatar_emoji FROM users WHERE username=?', (sender,)).fetchone()
     tags = get_user_tags(sender)
     conn.close()
-    emit('new_message', {'message_id': cursor.lastrowid, 'room': room, 'content': content, 'sender_username': sender, 'sender_nickname': u['nickname'], 'sender_avatar_color': u['avatar_color'], 'sender_avatar_emoji': u['avatar_emoji'], 'timestamp': time.time(), 'reply_content': data.get('reply_content'), 'sender_tags': tags}, room=room)
+    emit('new_message', {
+        'message_id': cursor.lastrowid, 
+        'room': room, 
+        'content': content, 
+        'sender_username': sender, 
+        'sender_nickname': u['nickname'], 
+        'sender_avatar_color': u['avatar_color'], 
+        'sender_avatar_emoji': u['avatar_emoji'], 
+        'timestamp': time.time(), 
+        'reply_content': data.get('reply_content'), 
+        'sender_tags': tags
+    }, room=room)
+
 @socketio.on('request_history')
 def handle_history(data):
     conn = get_db_connection()
