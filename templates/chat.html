@@ -9,15 +9,19 @@
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
-    <span id="my-username" hidden>{{ user.username }}</span>
-    <span id="my-nickname" hidden>{{ user.nickname }}</span>
-    <span id="my-handle" hidden>{{ user.handle }}</span>
-    <span id="my-color" hidden>{{ user.avatar_color }}</span>
-    <span id="my-emoji" hidden>{{ user.avatar_emoji }}</span>
-    <span id="my-bio" hidden>{{ user.bio or '' }}</span>
+    <div id="app-data" 
+         data-username="{{ user.username }}"
+         data-nickname="{{ user.nickname }}"
+         data-handle="{{ user.handle }}"
+         data-color="{{ user.avatar_color }}"
+         data-emoji="{{ user.avatar_emoji }}"
+         data-bio="{{ user.bio or '' }}"
+         data-tags='{{ user.tags | tojson | safe }}'
+         hidden></div>
 
     <div class="app">
         <div class="nav">
+            <div class="nav-indicator" id="nav-indicator"></div>
             <div class="nav-group">
                 <button class="nav-btn active anim-nav-btn" data-tab="home" title="Главная"><i class="fas fa-home"></i></button>
                 <button class="nav-btn anim-nav-btn" data-tab="chats" title="Чаты">
@@ -40,6 +44,7 @@
                     <div class="profile-large-ava" id="pop-ava" style="background-color: {{ user.avatar_color }};">{{ user.avatar_emoji }}</div>
                     <div class="profile-names">
                         <h3 id="pop-nick">{{ user.nickname }}</h3>
+                        <div class="tag-pills-container" id="pop-tags"></div>
                         <p id="pop-handle">@{{ user.handle }}</p>
                     </div>
                 </div>
@@ -53,12 +58,23 @@
                 <div style="text-align:center; margin-bottom:10px;">
                     <div id="edit-preview-ava" class="profile-large-ava" style="margin:0 auto;"></div>
                 </div>
-                <input type="text" id="edit-nick-in" placeholder="Никнейм" maxlength="20">
-                <input type="text" id="edit-handle-in" placeholder="Handle" maxlength="20">
-                <textarea id="edit-bio-in" rows="2" placeholder="О себе (макс 300)" maxlength="300"></textarea>
-                <div class="picker-grid" id="pop-color-picker" style="margin: 10px 0;"></div>
+                
+                <label class="input-label">Никнейм</label>
+                <input type="text" id="edit-nick-in" class="view-input" maxlength="20">
+                
+                <label class="input-label">Handle (ID)</label>
+                <input type="text" id="edit-handle-in" class="view-input" maxlength="20">
+                
+                <label class="input-label">О себе</label>
+                <textarea id="edit-bio-in" class="view-input" rows="2" maxlength="300"></textarea>
+                
+                <label class="input-label">Цвет аватара</label>
+                <div class="picker-grid" id="pop-color-picker"></div>
+                
+                <label class="input-label">Эмодзи</label>
                 <div class="picker-grid" id="pop-emoji-picker" style="margin-bottom:10px;"></div>
-                <div style="display:flex; gap:10px;">
+                
+                <div style="display:flex; gap:10px; margin-top:15px;">
                     <button class="primary-btn" id="pop-save-btn">Сохранить</button>
                     <button class="secondary-btn" id="pop-cancel-btn">Отмена</button>
                 </div>
@@ -79,21 +95,26 @@
                     </div>
                     <div style="overflow-y:auto; flex:1;">
                         <div id="chat-list-container"></div>
-                        
                         <div style="padding: 15px 10px 5px; color:#666; font-size:0.75rem; text-transform:uppercase; font-weight:bold;">Пользователи</div>
                         <div id="user-list"></div>
                     </div>
                 </div>
             
-                <div class="chat-window" id="chat-window">
+                <div class="chat-window empty" id="chat-window">
+                    <div class="chat-placeholder">
+                        <i class="fas fa-comments"></i>
+                        <span>Выберите чат, чтобы начать общение</span>
+                    </div>
+                    
                     <div class="header" id="chat-header">
                         <i class="fas fa-arrow-left mobile-only" onclick="closeChat()" style="margin-right:15px; font-size:1.2rem; color:#888;"></i>
-                        <div id="header-avatar" class="ava" style="width:38px; height:38px; font-size:1.2rem; margin-right:12px; display:none;"><span></span></div>
-                        <div style="display:flex; flex-direction:column;">
-                            <span id="chat-title">Выберите чат</span>
+                        <div id="header-avatar" class="ava" style="width:38px; height:38px; font-size:1.2rem; margin-right:12px; display:none; cursor:pointer;"><span></span></div>
+                        <div style="display:flex; flex-direction:column; cursor:pointer;" id="header-info-box">
+                            <span id="chat-title"></span>
                             <small id="chat-status" style="font-weight: 500; color:#888; font-size: 0.75rem;"></small>
                         </div>
                     </div>
+
                     <div class="msgs" id="msgs"></div>
                     <div id="reply-bar" style="display:none; padding: 10px 20px; background: var(--panel); border-bottom:1px solid var(--border);">
                         <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
@@ -120,9 +141,10 @@
             <button class="close-btn" data-close="view-user-modal">&times;</button>
             <div style="text-align:center; margin:20px 0;">
                 <div id="user-view-avatar" class="ava" style="width:80px; height:80px; font-size:3rem; margin:0 auto;"><span></span></div>
-                <h2 id="user-view-nickname"></h2>
-                <p id="user-view-handle" style="color:#888"></p>
-                <p id="user-view-bio" style="color:#ccc; font-style:italic; margin-top:10px;"></p>
+                <h2 id="user-view-nickname" style="display:flex; justify-content:center; align-items:center; gap:5px; margin-top:10px;"></h2>
+                <div class="tag-pills-container" id="user-view-tags"></div>
+                <p id="user-view-handle" style="color:#888; margin-top:5px;"></p>
+                <p id="user-view-bio" style="color:#ccc; font-style:italic; margin-top:15px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;"></p>
             </div>
             <button class="primary-btn" id="view-dm-btn"><i class="fas fa-comment"></i> Написать</button>
         </div>
@@ -140,10 +162,9 @@
         <div class="modal-content">
             <button class="close-btn" data-close="create-group-modal">&times;</button>
             <h3>Создать группу</h3>
-            <input type="text" id="group-name-input" class="view-input" placeholder="Название группы" style="margin-bottom:15px; width:100%; padding:10px; border-radius:10px; background:#333; border:1px solid #444; color:white;">
+            <input type="text" id="group-name-input" class="view-input" placeholder="Название группы">
             <p style="font-size:0.9rem; color:#888; margin-bottom:10px;">Выберите участников:</p>
-            <div class="user-select-list" id="group-user-select">
-                </div>
+            <div class="user-select-list" id="group-user-select"></div>
             <button class="primary-btn" id="submit-group-btn">Создать</button>
         </div>
     </div>
