@@ -1,29 +1,105 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head><meta charset="UTF-8"><title>Профиль</title><link rel="stylesheet" href="/static/css/auth.css"></head>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Настройка профиля</title>
+    <link rel="stylesheet" href="/static/css/auth.css">
+    <style>
+        .picker-grid { display: flex; gap: 10px; justify-content: center; margin: 15px 0; flex-wrap: wrap; }
+        .color-opt, .emoji-opt { 
+            width: 35px; height: 35px; border-radius: 50%; cursor: pointer; 
+            display: flex; align-items: center; justify-content: center; border: 2px solid transparent;
+        }
+        .color-opt.selected, .emoji-opt.selected { border-color: white; transform: scale(1.1); }
+        .emoji-opt { background: #333; font-size: 1.2rem; }
+    </style>
+</head>
 <body>
-    <div class="auth-container">
-        <div class="auth-card">
-            <h1 class="fly-text">Профиль</h1>
-            <div id="preview-ava" style="width:80px;height:80px;border-radius:50%;background:#007aff;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;font-size:2.5rem;">😀</div>
-            <form id="setup-form">
-                <div class="form-group"><label>Никнейм</label><input type="text" name="nickname" required></div>
-                <div class="form-group"><label>@Handle (уникальный)</label><input type="text" name="handle" required></div>
-                
-                <div class="picker-grid">
-                    <div class="color-option" style="background:#007aff"></div>
-                    <div class="color-option" style="background:#34c759"></div>
-                    <div class="color-option" style="background:#ff3b30"></div>
-                    <div class="color-option" style="background:#af52de"></div>
-                </div>
-                <div class="picker-grid">
-                    <div class="emoji-option">😀</div><div class="emoji-option">😎</div>
-                    <div class="emoji-option">👽</div><div class="emoji-option">🤖</div>
-                </div>
-                <button type="submit" class="auth-btn">Готово</button>
-            </form>
-        </div>
+    <div class="auth-card visible" style="width: 400px;">
+        <h2>Создание профиля</h2>
+        <form id="setup-form">
+            <div class="form-group">
+                <label>Как вас называть? (Никнейм)</label>
+                <input type="text" id="nickname" required maxlength="20" placeholder="Имя в чате">
+            </div>
+            
+            <div class="form-group">
+                <label>Уникальный @Handle</label>
+                <input type="text" id="handle" required maxlength="20" placeholder="username">
+            </div>
+
+            <div class="form-group" style="text-align:center;">
+                <label>Выберите цвет</label>
+                <div class="picker-grid" id="color-picker"></div>
+                <label>Выберите аватар</label>
+                <div class="picker-grid" id="emoji-picker"></div>
+            </div>
+
+            <button type="submit">Начать общение</button>
+            <div id="error-msg"></div>
+        </form>
     </div>
-    <script src="/static/js/auth.js"></script>
+
+    <script>
+        const colors = ['#007aff', '#34c759', '#ff3b30', '#af52de', '#ff9500', '#5856d6'];
+        const emojis = ['😀','😎','👽','🤖','👻','🐱','🦊','🐼'];
+        let selectedColor = colors[0];
+        let selectedEmoji = emojis[0];
+
+        const cp = document.getElementById('color-picker');
+        colors.forEach(c => {
+            const d = document.createElement('div');
+            d.className = 'color-opt' + (c === selectedColor ? ' selected' : '');
+            d.style.backgroundColor = c;
+            d.onclick = () => {
+                selectedColor = c;
+                document.querySelectorAll('.color-opt').forEach(el => el.classList.remove('selected'));
+                d.classList.add('selected');
+            };
+            cp.appendChild(d);
+        });
+
+        const ep = document.getElementById('emoji-picker');
+        emojis.forEach(e => {
+            const d = document.createElement('div');
+            d.className = 'emoji-opt' + (e === selectedEmoji ? ' selected' : '');
+            d.textContent = e;
+            d.onclick = () => {
+                selectedEmoji = e;
+                document.querySelectorAll('.emoji-opt').forEach(el => el.classList.remove('selected'));
+                d.classList.add('selected');
+            };
+            ep.appendChild(d);
+        });
+
+        document.getElementById('setup-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const nickname = document.getElementById('nickname').value;
+            const handle = document.getElementById('handle').value;
+            const errorMsg = document.getElementById('error-msg');
+
+            try {
+                const res = await fetch('/api/user/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        nickname, handle, 
+                        color: selectedColor, 
+                        emoji: selectedEmoji 
+                    })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    window.location.href = '/';
+                } else {
+                    errorMsg.textContent = data.message;
+                }
+            } catch (err) {
+                errorMsg.textContent = "Ошибка соединения";
+            }
+        };
+    </script>
 </body>
 </html>

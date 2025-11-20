@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Pramien Admin</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/admin.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="admin-layout">
+        <div class="admin-sidebar">
+            <h2>Pramien<span style="color:var(--danger)">Admin</span></h2>
+            <button class="tab-btn active" onclick="showTab('stats')">Статистика</button>
+            <button class="tab-btn" onclick="showTab('users')">Пользователи</button>
+            <button class="tab-btn" onclick="showTab('bans')">Бан-лист</button>
+        </div>
+        <div class="admin-content">
+            <div id="tab-stats" class="tab-content active">
+                <h1>Статистика</h1>
+                <div class="stats-grid">
+                    <div class="stat-card"><h3 id="stat-users">0</h3><p>Юзеров</p></div>
+                    <div class="stat-card"><h3 id="stat-msgs">0</h3><p>Сообщений</p></div>
+                    <div class="stat-card"><h3 id="stat-bans" style="color:var(--danger)">0</h3><p>Банов</p></div>
+                </div>
+            </div>
+            
+            <div id="tab-users" class="tab-content">
+                <h1>Пользователи</h1>
+                <input type="text" id="user-search" placeholder="Поиск..." oninput="searchUsers()">
+                <table class="user-table">
+                    <thead><tr><th>ID</th><th>User</th><th>Actions</th></tr></thead>
+                    <tbody id="users-table-body"></tbody>
+                </table>
+            </div>
+
+            <div id="tab-bans" class="tab-content">
+                <h1>Забаненные</h1>
+                <button class="secondary-btn" onclick="loadBans()" style="width:auto; margin-bottom:15px;">Обновить</button>
+                <table class="user-table">
+                    <thead><tr><th>User</th><th>Reason</th><th>Expires</th><th>Action</th></tr></thead>
+                    <tbody id="bans-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="ban-modal">
+        <div class="modal-content">
+            <h3>Бан пользователя</h3>
+            <input type="text" id="ban-reason" placeholder="Причина">
+            <select id="ban-time" style="width:100%; padding:10px; margin:10px 0; background:#333; color:white; border:1px solid #444; border-radius:10px;">
+                <option value="60">1 Час</option>
+                <option value="1440">24 Часа</option>
+                <option value="10080">7 Дней</option>
+            </select>
+            <button onclick="submitBan()" class="primary-btn" style="background:var(--danger)">Забанить</button>
+            <button onclick="closeModal('ban-modal')" class="secondary-btn">Отмена</button>
+        </div>
+    </div>
+
+    <div class="modal" id="tag-modal">
+        <div class="modal-content">
+            <h3>Выдать тег</h3>
+            <div style="border-bottom:1px solid #444; padding-bottom:15px; margin-bottom:15px;">
+                <h4>Новый тег</h4>
+                <input type="text" id="new-tag-name" placeholder="Название (напр. Moderator)">
+                <input type="text" id="new-tag-emoji" placeholder="Эмодзи (напр. star)">
+                <label style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+                    <input type="checkbox" id="new-tag-special" style="width:auto;"> Особый (в нике)
+                </label>
+            </div>
+            
+            <h4>Или готовые:</h4>
+            <div style="display:flex; gap:5px; flex-wrap:wrap;" id="preset-tags">
+                <button class="tag-pill" onclick="fillTag('Verified', 'check-circle', true)">Verified</button>
+                <button class="tag-pill" onclick="fillTag('Developer', 'hammer', true)">Developer</button>
+            </div>
+
+            <button onclick="submitTag()" class="primary-btn" style="margin-top:15px;">Выдать</button>
+            <button onclick="closeModal('tag-modal')" class="secondary-btn">Отмена</button>
+        </div>
+    </div>
+
+    <script src="/static/js/admin.js"></script>
+</body>
+</html>

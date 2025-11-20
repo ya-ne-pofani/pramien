@@ -1,592 +1,287 @@
 import os
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from flask_socketio import SocketIO, emit, join_room
+import json
+import sqlite3
+import time
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
-from flasgger import Swagger
+from datetime import datetime
+import uuid
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret_key_reset_mode'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///chat.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# --- SWAGGER CONFIG ---
-app.config['SWAGGER'] = {
-    'title': 'Pramien Chat API',
-    'uiversion': 3,
-    'version': '1.0.0',
-    'description': 'API для мессенджера с поддержкой E2EE и игр',
-    'termsOfService': '/tos'
-}
-swagger = Swagger(app)
-
-db = SQLAlchemy(app)
+app.config['SECRET_KEY'] = 'secret_key_pramien_v2'
 socketio = SocketIO(app, cors_allowed_origins="*")
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
 
-# --- MODELS ---
-class User(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(48), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-    nickname = db.Column(db.String(20), nullable=False)
-    handle = db.Column(db.String(20), unique=True, nullable=True)
-    bio = db.Column(db.String(300), nullable=True)
-    avatar_color = db.Column(db.String(20), default='#007aff')
-    avatar_emoji = db.Column(db.String(10), default='😀')
-    public_key = db.Column(db.Text, nullable=True) # E2EE Key
-    current_activity = db.Column(db.String(100), default='Online')
-    last_seen = db.Column(db.Float, default=0.0)
+# --- DATABASE ---
+def get_db_connection():
+    conn = sqlite3.connect('instance/chat.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
-class Message(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    room = db.Column(db.String(50), nullable=False)
-    sender_username = db.Column(db.String(48), nullable=False)
-    content = db.Column(db.String(5000), nullable=False)
-    is_encrypted = db.Column(db.Boolean, default=False)
-    timestamp = db.Column(db.Float, default=datetime.now().timestamp)
-    reply_content = db.Column(db.String(200), nullable=True)
-    reply_nickname = db.Column(db.String(20), nullable=True)
+def init_db():
+    if not os.path.exists('instance'):
+        os.makedirs('instance')
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        nickname TEXT NOT NULL,
+        handle TEXT UNIQUE NOT NULL,
+        bio TEXT,
+        avatar_color TEXT DEFAULT '#555',
+        avatar_emoji TEXT DEFAULT '👤',
+        public_key TEXT,
+        last_seen REAL DEFAULT 0
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room TEXT NOT NULL,
+        sender_username TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp REAL NOT NULL,
+        reply_to_id INTEGER,
+        is_encrypted BOOLEAN DEFAULT 0
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS groups (
+        group_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_username TEXT NOT NULL,
+        avatar_color TEXT,
+        avatar_emoji TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS group_members (
+        group_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        PRIMARY KEY (group_id, username)
+    )''')
+    conn.commit()
+    conn.close()
 
-class Game(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(100), nullable=False)
-    slug = db.Column(db.String(50), unique=True, nullable=False)
-    description = db.Column(db.String(200))
-    iframe_src = db.Column(db.String(200), nullable=False)
+init_db()
 
-class GameScore(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    game_slug = db.Column(db.String(50), nullable=False)
-    user_username = db.Column(db.String(48), nullable=False)
-    score = db.Column(db.Integer, default=0)
+# --- ROUTES ---
 
-@login_manager.user_loader
-def load_user(id): return User.query.get(int(id))
-
-# --- HELPERS ---
-def get_room_name(user1, user2):
-    return f"{sorted([user1, user2])[0]}_{sorted([user1, user2])[1]}"
-
-# --- WEB ROUTES ---
 @app.route('/')
-@login_required
-def chat():
-    if not current_user.handle: return redirect(url_for('setup_page'))
-    return render_template('chat.html', user=current_user)
+def index():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    return render_template('chat.html', user=get_current_user())
 
-@app.route('/games')
-@login_required
-def games(): return render_template('games.html', user=current_user)
+def get_current_user():
+    if 'user' not in session: return None
+    conn = get_db_connection()
+    user = conn.execute('SELECT * FROM users WHERE username = ?', (session['user'],)).fetchone()
+    conn.close()
+    return user
 
-@app.route('/setup')
-@login_required
-def setup_page(): return render_template('setup.html', user=current_user)
-
+# --- AUTH PAGES ---
 @app.route('/login')
-def login(): return render_template('login.html')
+def login():
+    return render_template('login.html')
 
 @app.route('/register')
-def register(): return render_template('register.html')
+def register():
+    return render_template('register.html')
 
-# ==========================================
-#                 REST API
-# ==========================================
-
+# --- AUTH API (FIXED FOR LOGS) ---
 @app.route('/api/auth/login', methods=['POST'])
 def api_login():
-    """
-    Вход пользователя
-    Получение сессии для доступа к защищенным методам.
-    ---
-    tags:
-      - Auth
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required:
-            - username
-            - password
-          properties:
-            username:
-              type: string
-              example: user1
-            password:
-              type: string
-              example: password123
-    responses:
-      200:
-        description: Успешный вход
-        schema:
-          type: object
-          properties:
-            success:
-              type: boolean
-            redirect:
-              type: string
-      401:
-        description: Ошибка авторизации
-    """
     data = request.json
-    user = User.query.filter_by(username=data.get('username')).first()
-    if user and check_password_hash(user.password_hash, data.get('password')):
-        login_user(user)
-        return jsonify({'success': True, 'redirect': url_for('setup_page') if not user.handle else url_for('chat')})
-    return jsonify({'success': False, 'message': 'Неверный логин или пароль'}), 401
+    username = data.get('username')
+    password = data.get('password')
+    
+    conn = get_db_connection()
+    user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+    conn.close()
+    
+    if user and check_password_hash(user['password'], password):
+        session['user'] = username
+        return jsonify({'success': True, 'redirect': '/'})
+    
+    return jsonify({'success': False, 'error': 'Неверный логин или пароль'}), 401
 
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
-    """
-    Регистрация нового пользователя
-    Создает новый аккаунт в системе.
-    ---
-    tags:
-      - Auth
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required:
-            - username
-            - password
-          properties:
-            username:
-              type: string
-            password:
-              type: string
-    responses:
-      200:
-        description: Аккаунт создан
-      400:
-        description: Ошибка валидации или логин занят
-    """
     data = request.json
-    if len(data.get('username')) > 48: return jsonify({'success': False, 'message': 'Логин слишком длинный'}), 400
-    if User.query.filter_by(username=data.get('username')).first():
-        return jsonify({'success': False, 'message': 'Логин занят'}), 400
+    username = data.get('username')
+    password = data.get('password')
+    nickname = data.get('nickname')
+    handle = data.get('handle', '').replace('@', '')
     
-    new_user = User(
-        username=data.get('username'),
-        password_hash=generate_password_hash(data.get('password')),
-        nickname=data.get('username')[:20],
-        last_seen=datetime.now().timestamp()
-    )
-    db.session.add(new_user)
-    db.session.commit()
-    login_user(new_user)
-    return jsonify({'success': True, 'redirect': url_for('setup_page')})
+    if not username or not password or not nickname or not handle:
+        return jsonify({'success': False, 'error': 'Заполните все поля'}), 400
+
+    hashed_pw = generate_password_hash(password)
+    
+    import random
+    colors = ['#007aff', '#34c759', '#ff3b30', '#af52de', '#ff9500', '#5856d6']
+    emojis = ['🐶', '🐱', '🦊', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸']
+    
+    try:
+        conn = get_db_connection()
+        conn.execute('INSERT INTO users (username, password, nickname, handle, avatar_color, avatar_emoji) VALUES (?, ?, ?, ?, ?, ?)',
+                     (username, hashed_pw, nickname, handle, random.choice(colors), random.choice(emojis)))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'redirect': '/login'})
+    except sqlite3.IntegrityError:
+        return jsonify({'success': False, 'error': 'Пользователь с таким логином или handle уже существует'}), 409
 
 @app.route('/api/auth/logout', methods=['POST'])
-@login_required
-def api_logout():
-    """
-    Выход из системы
-    Завершает текущую сессию.
-    ---
-    tags:
-      - Auth
-    responses:
-      200:
-        description: Успешный выход
-    """
-    logout_user()
+def logout():
+    session.pop('user', None)
+    return jsonify({'success': True, 'redirect': '/login'})
+
+# --- API: CHATS & USERS ---
+@app.route('/api/chats')
+def get_chats():
+    if 'user' not in session: return jsonify({'error': 'Unauthorized'}), 401
+    my_username = session['user']
+    conn = get_db_connection()
+    
+    all_users = conn.execute('SELECT username, nickname, handle, avatar_color, avatar_emoji, last_seen FROM users WHERE username != ?', (my_username,)).fetchall()
+    
+    my_groups = conn.execute('''
+        SELECT g.group_id, g.name, g.avatar_color, g.avatar_emoji 
+        FROM groups g
+        JOIN group_members gm ON g.group_id = gm.group_id
+        WHERE gm.username = ?
+    ''', (my_username,)).fetchall()
+
+    chats_data = []
+    chats_data.append({'room': '#Global', 'type': 'global', 'name': 'Общий чат', 'avatar_emoji': '🌍', 'avatar_color': '#555', 'last_msg': ''})
+
+    for g in my_groups:
+        last = conn.execute('SELECT content, sender_username, timestamp FROM messages WHERE room = ? ORDER BY timestamp DESC LIMIT 1', (g['group_id'],)).fetchone()
+        preview = f"{last['sender_username']}: {last['content']}" if last else "Нет сообщений"
+        chats_data.append({
+            'room': g['group_id'], 'type': 'group', 'name': g['name'],
+            'avatar_emoji': g['avatar_emoji'] or '👥', 'avatar_color': g['avatar_color'] or '#007aff',
+            'last_msg': preview, 'timestamp': last['timestamp'] if last else 0
+        })
+
+    users_list = []
+    for u in all_users:
+        room_id = '_'.join(sorted([my_username, u['username']]))
+        last = conn.execute('SELECT content, timestamp FROM messages WHERE room = ? ORDER BY timestamp DESC LIMIT 1', (room_id,)).fetchone()
+        status = 'Online' if (time.time() - (u['last_seen'] or 0)) < 300 else 'Offline'
+        users_list.append({
+            'username': u['username'], 'nickname': u['nickname'], 'handle': u['handle'],
+            'avatar_color': u['avatar_color'], 'avatar_emoji': u['avatar_emoji'],
+            'room': room_id, 'last_msg': last['content'] if last else None, 'status': status
+        })
+
+    conn.close()
+    return jsonify({'chats': chats_data, 'users': users_list})
+
+# FIX: Добавляем старый маршрут /api/users для совместимости, если кэш браузера долбит его
+@app.route('/api/users')
+def get_users_legacy():
+    return get_chats()
+
+# --- API: GROUPS & PROFILE ---
+@app.route('/api/groups/create', methods=['POST'])
+def create_group():
+    if 'user' not in session: return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json
+    group_name = data.get('name')
+    members = data.get('members', [])
+    if not group_name: return jsonify({'error': 'Empty name'}), 400
+    
+    group_id = f"group_{uuid.uuid4().hex[:8]}"
+    my_username = session['user']
+    members.append(my_username)
+    members = list(set(members))
+    
+    import random
+    colors = ['#007aff', '#34c759', '#ff3b30', '#af52de', '#ff9500']
+    emojis = ['📢', '💬', '👥', '🔥', '✨', '🚀']
+    
+    conn = get_db_connection()
+    conn.execute('INSERT INTO groups (group_id, name, owner_username, avatar_color, avatar_emoji) VALUES (?, ?, ?, ?, ?)',
+                 (group_id, group_name, my_username, random.choice(colors), random.choice(emojis)))
+    for m in members:
+        conn.execute('INSERT INTO group_members (group_id, username) VALUES (?, ?)', (group_id, m))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'group_id': group_id})
+
+@app.route('/api/user/profile', methods=['POST'])
+def update_profile():
+    if 'user' not in session: return jsonify({'error': 401}), 401
+    d = request.json
+    conn = get_db_connection()
+    conn.execute('UPDATE users SET nickname=?, handle=?, bio=?, avatar_color=?, avatar_emoji=? WHERE username=?',
+                 (d['nickname'], d['handle'], d['bio'], d['color'], d['emoji'], session['user']))
+    conn.commit()
+    conn.close()
     return jsonify({'success': True})
 
-@app.route('/api/user/profile', methods=['GET', 'POST'])
-@login_required
-def api_profile():
-    """
-    Получить или обновить профиль текущего пользователя
-    GET - возвращает данные, POST - обновляет.
-    ---
-    tags:
-      - User
-    parameters:
-      - name: body
-        in: body
-        required: false
-        schema:
-          type: object
-          properties:
-            nickname:
-              type: string
-            handle:
-              type: string
-            bio:
-              type: string
-            color:
-              type: string
-            emoji:
-              type: string
-    responses:
-      200:
-        description: Успех
-    """
-    if request.method == 'GET':
-        return jsonify({
-            'success': True,
-            'profile': {
-                'username': current_user.username,
-                'nickname': current_user.nickname,
-                'handle': current_user.handle,
-                'bio': current_user.bio,
-                'color': current_user.avatar_color,
-                'emoji': current_user.avatar_emoji
-            }
-        })
+@app.route('/api/profile/<username>')
+def get_profile(username):
+    conn = get_db_connection()
+    u = conn.execute('SELECT nickname, handle, bio, avatar_color, avatar_emoji, public_key FROM users WHERE username=?', (username,)).fetchone()
+    conn.close()
+    if u: return jsonify({'success':True, 'profile': dict(u), 'has_key': bool(u['public_key'])})
+    return jsonify({'success':False})
 
-    data = request.json
-    if len(data.get('nickname', '')) > 20: return jsonify({'success': False, 'message': 'Имя слишком длинное'}), 400
-    
-    if data.get('handle'):
-        exists = User.query.filter_by(handle=data['handle']).first()
-        if exists and exists.id != current_user.id: return jsonify({'success': False, 'message': 'Handle занят'}), 400
-    
-    current_user.nickname = data.get('nickname', current_user.nickname)
-    current_user.handle = data.get('handle', current_user.handle)
-    current_user.bio = data.get('bio', current_user.bio)
-    current_user.avatar_color = data.get('color', current_user.avatar_color)
-    current_user.avatar_emoji = data.get('emoji', current_user.avatar_emoji)
-    db.session.commit()
-    return jsonify({'success': True, 'redirect': url_for('chat')})
-
-@app.route('/api/users', methods=['GET'])
-@login_required
-def api_users_list():
-    """
-    Список пользователей
-    Возвращает список всех пользователей для списка чатов с последними сообщениями.
-    ---
-    tags:
-      - Chat
-    responses:
-      200:
-        description: Список пользователей
-    """
-    users = User.query.filter(User.id != current_user.id).all()
-    users_data = []
-    for u in users:
-        room = get_room_name(current_user.username, u.username)
-        last_msg = Message.query.filter_by(room=room).order_by(Message.timestamp.desc()).first()
-        users_data.append({
-            'username': u.username, 
-            'nickname': u.nickname, 
-            'avatar_color': u.avatar_color, 
-            'avatar_emoji': u.avatar_emoji,
-            'public_key': u.public_key,
-            'current_activity': u.current_activity,
-            'last_seen': u.last_seen,
-            'last_msg_time': last_msg.timestamp if last_msg else 0,
-            'last_msg_preview': last_msg.content[:30] if last_msg and not last_msg.is_encrypted else "🔒 Message" if last_msg else None
-        })
-    users_data.sort(key=lambda x: x['last_msg_time'], reverse=True)
-    return jsonify({'users': users_data})
-
-@app.route('/api/keys', methods=['GET', 'POST'])
-@login_required
-def api_keys():
-    """
-    Управление E2EE ключами
-    GET - получить публичный ключ другого юзера.
-    POST - обновить свой публичный ключ.
-    ---
-    tags:
-      - Security
-    parameters:
-      - name: username
-        in: query
-        type: string
-        description: (Для GET) Логин пользователя, чей ключ нужен.
-      - name: body
-        in: body
-        description: (Для POST) JSON с публичным ключом
-        schema:
-          type: object
-          properties:
-            public_key:
-              type: string
-    responses:
-      200:
-        description: Успех
-    """
-    if request.method == 'POST':
-        data = request.json
-        current_user.public_key = data.get('public_key')
-        db.session.commit()
-        return jsonify({'success': True})
-    
-    # GET
-    target_username = request.args.get('username')
-    if not target_username:
-        return jsonify({'success': False, 'message': 'Username required'}), 400
-    
-    user = User.query.filter_by(username=target_username).first()
-    if not user or not user.public_key:
-        return jsonify({'success': False, 'message': 'Key not found'}), 404
-        
-    return jsonify({'success': True, 'public_key': user.public_key})
-
-@app.route('/api/chat/history', methods=['GET'])
-@login_required
-def api_chat_history():
-    """
-    История сообщений
-    Получить историю переписки с пользователем или в общей комнате.
-    ---
-    tags:
-      - Chat
-    parameters:
-      - name: partner
-        in: query
-        type: string
-        description: Логин собеседника (или пустой для общего чата если room=#Global)
-      - name: room
-        in: query
-        type: string
-        description: Явное указание комнаты (например #Global)
-      - name: limit
-        in: query
-        type: integer
-        default: 100
-    responses:
-      200:
-        description: Список сообщений
-    """
-    room = request.args.get('room')
-    partner = request.args.get('partner')
-    limit = int(request.args.get('limit', 100))
-
-    if not room and partner:
-        room = get_room_name(current_user.username, partner)
-    elif not room:
-        room = '#Global'
-
-    msgs = Message.query.filter_by(room=room).order_by(Message.timestamp.asc()).limit(limit).all()
-    res = []
-    for m in msgs:
-        s = User.query.filter_by(username=m.sender_username).first()
-        res.append({
-            'message_id': m.id, 
-            'room': m.room, 
-            'content': m.content,
-            'is_encrypted': m.is_encrypted,
-            'sender_username': m.sender_username, 
-            'sender_nickname': s.nickname if s else m.sender_username, 
-            'sender_avatar_color': s.avatar_color if s else '#555',
-            'sender_avatar_emoji': s.avatar_emoji if s else '?',
-            'timestamp': m.timestamp, 
-            'reply_content': m.reply_content, 
-            'reply_nickname': m.reply_nickname
-        })
-    return jsonify({'messages': res})
-
-@app.route('/api/chat/send', methods=['POST'])
-@login_required
-def api_chat_send():
-    """
-    Отправка сообщения
-    Отправляет сообщение и уведомляет клиентов через WebSocket.
-    ---
-    tags:
-      - Chat
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required:
-            - content
-          properties:
-            content:
-              type: string
-              description: Текст или зашифрованная строка (base64)
-            partner:
-              type: string
-              description: Логин получателя (для ЛС)
-            room:
-              type: string
-              description: Комната (для #Global)
-            is_encrypted:
-              type: boolean
-            reply_content:
-              type: string
-            reply_nickname:
-              type: string
-    responses:
-      200:
-        description: Сообщение отправлено
-    """
-    data = request.json
-    content = data.get('content', '')
-    room = data.get('room')
-    partner = data.get('partner')
-
-    if not room and partner:
-        room = get_room_name(current_user.username, partner)
-    elif not room:
-        room = '#Global'
-
-    if len(content) > 5000: content = content[:5000]
-
-    msg = Message(
-        room=room, 
-        sender_username=current_user.username, 
-        content=content, 
-        is_encrypted=data.get('is_encrypted', False),
-        reply_content=data.get('reply_content'), 
-        reply_nickname=data.get('reply_nickname')
-    )
-    db.session.add(msg)
-    db.session.commit()
-    
-    # Подготовка данных для сокетов и ответа
-    msg_data = {
-        'message_id': msg.id, 
-        'room': msg.room, 
-        'content': msg.content,
-        'is_encrypted': msg.is_encrypted,
-        'sender_username': current_user.username, 
-        'sender_nickname': current_user.nickname, 
-        'sender_avatar_color': current_user.avatar_color,
-        'sender_avatar_emoji': current_user.avatar_emoji,
-        'timestamp': msg.timestamp, 
-        'reply_content': msg.reply_content, 
-        'reply_nickname': msg.reply_nickname
-    }
-    
-    # Real-time уведомление для тех, кто сейчас онлайн в вебе
-    socketio.emit('new_message', msg_data, room=room)
-    
-    # Также отправляем уведомление получателю в личный канал сокетов, чтобы обновился список чатов
-    if room != '#Global':
-        users = room.split('_')
-        recipient = users[0] if users[1] == current_user.username else users[1]
-        socketio.emit('new_message', msg_data, room=recipient)
-
-    return jsonify({'success': True, 'message': msg_data})
-
-@app.route('/api/games', methods=['GET'])
-@login_required
-def api_games_list():
-    """
-    Список игр и рекордов
-    ---
-    tags:
-      - Games
-    responses:
-      200:
-        description: Список доступных игр
-    """
-    games = Game.query.all()
-    res = []
-    for g in games:
-        score = GameScore.query.filter_by(game_slug=g.slug, user_username=current_user.username).first()
-        res.append({'title': g.title, 'slug': g.slug, 'description': g.description, 'iframe_src': g.iframe_src, 'user_high_score': score.score if score else 0})
-    return jsonify({'games': res})
-
-# --- SOCKET EVENTS (Legacy & Realtime) ---
-@socketio.on('connect')
-def on_connect():
-    if current_user.is_authenticated:
-        current_user.current_activity = 'Online'
-        current_user.last_seen = datetime.now().timestamp()
-        db.session.commit()
-        join_room(current_user.username) # Личная комната для уведомлений
-        emit('activity_update', {'username': current_user.username, 'activity': 'Online', 'last_seen': current_user.last_seen}, broadcast=True)
+# --- SOCKETS ---
+@socketio.on('join')
+def on_join(data):
+    join_room(data['room'])
 
 @socketio.on('join_dm')
-def on_join(data):
-    target = data.get('username')
-    if target:
-        room = get_room_name(current_user.username, target)
-        join_room(room)
+def on_join_dm(data):
+    pass 
 
 @socketio.on('request_history')
-def on_history(data):
-    # Socket-версия получения истории (дублирует REST API, но быстрее для веба)
-    room = data.get('room')
-    if room:
-        join_room(room)
-        msgs = Message.query.filter_by(room=room).order_by(Message.timestamp.asc()).limit(100).all()
-        res = []
-        for m in msgs:
-            s = User.query.filter_by(username=m.sender_username).first()
-            res.append({
-                'message_id': m.id, 
-                'room': m.room, 
-                'content': m.content,
-                'is_encrypted': m.is_encrypted,
-                'sender_username': m.sender_username, 
-                'sender_nickname': s.nickname if s else m.sender_username, 
-                'sender_avatar_color': s.avatar_color if s else '#555',
-                'sender_avatar_emoji': s.avatar_emoji if s else '?',
-                'timestamp': m.timestamp, 
-                'reply_content': m.reply_content, 
-                'reply_nickname': m.reply_nickname
-            })
-        emit('message_history', {'room': room, 'messages': res})
+def handle_history(data):
+    room = data['room']
+    conn = get_db_connection()
+    msgs_db = conn.execute('''
+        SELECT m.*, u.nickname as sender_nickname, u.avatar_color as sender_avatar_color, u.avatar_emoji as sender_avatar_emoji
+        FROM messages m
+        LEFT JOIN users u ON m.sender_username = u.username
+        WHERE room = ? ORDER BY timestamp ASC LIMIT 100
+    ''', (room,)).fetchall()
+    messages = [dict(m) for m in msgs_db]
+    emit('message_history', {'room': room, 'messages': messages})
+    conn.close()
 
 @socketio.on('send_message')
-def on_send_socket(data):
-    # Socket-версия отправки (для веб-клиента)
-    content = data['content']
-    if len(content) > 5000: content = content[:5000]
-
-    msg = Message(
-        room=data['room'], 
-        sender_username=current_user.username, 
-        content=content, 
-        is_encrypted=data.get('is_encrypted', False),
-        reply_content=data.get('reply_content'), 
-        reply_nickname=data.get('reply_nickname')
-    )
-    db.session.add(msg)
-    db.session.commit()
-    
+def handle_message(data):
+    if 'user' not in session: return
+    room, content = data['room'], data['content']
+    sender = session['user']
+    conn = get_db_connection()
+    cursor = conn.execute('INSERT INTO messages (room, sender_username, content, timestamp) VALUES (?, ?, ?, ?)', 
+                          (room, sender, content, time.time()))
+    msg_id = cursor.lastrowid
+    conn.commit()
+    u = conn.execute('SELECT nickname, avatar_color, avatar_emoji FROM users WHERE username=?', (sender,)).fetchone()
+    conn.close()
     msg_data = {
-        'message_id': msg.id, 
-        'room': msg.room, 
-        'content': msg.content,
-        'is_encrypted': msg.is_encrypted,
-        'sender_username': current_user.username, 
-        'sender_nickname': current_user.nickname, 
-        'sender_avatar_color': current_user.avatar_color,
-        'sender_avatar_emoji': current_user.avatar_emoji,
-        'timestamp': msg.timestamp, 
-        'reply_content': msg.reply_content, 
-        'reply_nickname': msg.reply_nickname
+        'message_id': msg_id, 'room': room, 'content': content,
+        'sender_username': sender, 'sender_nickname': u['nickname'],
+        'sender_avatar_color': u['avatar_color'], 'sender_avatar_emoji': u['avatar_emoji'],
+        'timestamp': time.time(), 'reply_content': data.get('reply_content'), 'reply_nickname': data.get('reply_nickname')
     }
-    
-    emit('new_message', msg_data, room=msg.room)
-    if data['room'] != '#Global':
-        users = data['room'].split('_')
-        recipient = users[0] if users[1] == current_user.username else users[1]
-        emit('new_message', msg_data, room=recipient)
-
-@socketio.on('update_activity')
-def on_act(data):
-    current_user.current_activity = data.get('activity')
-    current_user.last_seen = datetime.now().timestamp()
-    db.session.commit()
-    emit('activity_update', {'username': current_user.username, 'activity': current_user.current_activity, 'last_seen': current_user.last_seen}, broadcast=True)
+    emit('new_message', msg_data, room=room)
 
 @socketio.on('typing_event')
-def on_typing(data):
-    emit('display_typing', {'room': data['room'], 'username': current_user.username, 'state': data['state']}, room=data['room'])
+def handle_typing(data):
+    emit('display_typing', {'room': data['room'], 'username': session['user'], 'state': data['state']}, room=data['room'])
+
+@socketio.on('connect')
+def handle_connect():
+    if 'user' in session:
+        conn = get_db_connection()
+        conn.execute('UPDATE users SET last_seen=? WHERE username=?', (time.time(), session['user']))
+        conn.commit()
+        conn.close()
+        emit('activity_update', {'username': session['user'], 'activity': 'Online', 'last_seen': time.time()}, broadcast=True)
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        if Game.query.count() == 0:
-            db.session.add(Game(title="Змейка", slug="snake", description="Classic", iframe_src="/static/games/snake.html"))
-            db.session.commit()
     socketio.run(app, debug=True, host='0.0.0.0', port=5000)

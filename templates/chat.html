@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Чат</title>
+    <title>Pramien</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
@@ -19,39 +19,67 @@
     <div class="app">
         <div class="nav">
             <div class="nav-group">
-                <button class="nav-btn active" data-tab="home" title="Главная"><i class="fas fa-home"></i></button>
-                <button class="nav-btn" data-tab="chats" title="Чаты"><i class="fas fa-comment-alt"></i></button>
-                <a href="/games" class="nav-btn" title="Игры"><i class="fas fa-gamepad"></i></a>
+                <button class="nav-btn active anim-nav-btn" data-tab="home" title="Главная"><i class="fas fa-home"></i></button>
+                <button class="nav-btn anim-nav-btn" data-tab="chats" title="Чаты">
+                    <i class="fas fa-comment-alt"></i>
+                    <span class="nav-badge" id="total-unread">0</span>
+                </button>
+                <a href="/games" class="nav-btn anim-nav-btn" title="Игры"><i class="fas fa-gamepad"></i></a>
             </div>
             <div class="nav-group desktop-only">
-                <button class="nav-btn" id="settings-btn" title="Настройки"><i class="fas fa-cog"></i></button>
-                <div class="nav-avatar" id="profile-btn" title="Профиль" style="background-color: {{ user.avatar_color }};">
+                <button class="nav-btn anim-nav-btn" id="settings-btn" title="Настройки"><i class="fas fa-cog"></i></button>
+                <div class="nav-avatar anim-nav-btn" id="my-avatar-btn" title="Мой профиль" style="background-color: {{ user.avatar_color }};">
                     <span>{{ user.avatar_emoji }}</span>
                 </div>
-                <button class="nav-btn" id="logout-btn" title="Выход"><i class="fas fa-sign-out-alt"></i></button>
+            </div>
+        </div>
+
+        <div class="profile-popover" id="profile-popover">
+            <div id="popover-view">
+                <div class="profile-header">
+                    <div class="profile-large-ava" id="pop-ava" style="background-color: {{ user.avatar_color }};">{{ user.avatar_emoji }}</div>
+                    <div class="profile-names">
+                        <h3 id="pop-nick">{{ user.nickname }}</h3>
+                        <p id="pop-handle">@{{ user.handle }}</p>
+                    </div>
+                </div>
+                <div class="profile-bio-box" id="pop-bio">{{ user.bio or 'Нет статуса' }}</div>
+                <div class="profile-controls">
+                    <button class="icon-btn" id="pop-edit-btn" title="Редактировать"><i class="fas fa-pencil-alt"></i></button>
+                    <button class="icon-btn logout-icon" id="pop-logout-btn" title="Выйти"><i class="fas fa-sign-out-alt"></i></button>
+                </div>
+            </div>
+            <div id="popover-edit" class="edit-form">
+                <div style="text-align:center; margin-bottom:10px;">
+                    <div id="edit-preview-ava" class="profile-large-ava" style="margin:0 auto;"></div>
+                </div>
+                <input type="text" id="edit-nick-in" placeholder="Никнейм" maxlength="20">
+                <input type="text" id="edit-handle-in" placeholder="Handle" maxlength="20">
+                <textarea id="edit-bio-in" rows="2" placeholder="О себе (макс 300)" maxlength="300"></textarea>
+                <div class="picker-grid" id="pop-color-picker" style="margin: 10px 0;"></div>
+                <div class="picker-grid" id="pop-emoji-picker" style="margin-bottom:10px;"></div>
+                <div style="display:flex; gap:10px;">
+                    <button class="primary-btn" id="pop-save-btn">Сохранить</button>
+                    <button class="secondary-btn" id="pop-cancel-btn">Отмена</button>
+                </div>
             </div>
         </div>
 
         <div class="main">
             <div id="tab-home" class="app-tab active">
-                <div style="font-size: 4rem; color: #333; margin-bottom: 20px;"><i class="fas fa-robot"></i></div>
-                <h1 style="color:var(--primary); margin-bottom:10px;">Привет, {{ user.nickname }}!</h1>
-                <p style="color:#888;">Выбери чат слева или сыграй в игры.</p>
+                <h1 id="welcome-text" style="color:var(--primary); margin-bottom:10px;">Привет, {{ user.nickname }}!</h1>
+                <p id="subtitle-text" style="color:#888; height: 1.2em;">Выбери чат слева или сыграй в игры.</p>
             </div>
             
             <div id="tab-chats" class="app-tab">
                 <div class="chat-list">
                     <div class="header">
-                        <span>Сообщения</span>
-                        <i class="fas fa-edit" style="color:#888; cursor:pointer;"></i>
+                        <span>Чаты</span>
+                        <i class="fas fa-plus" id="create-group-btn" style="color:var(--primary); cursor:pointer; font-size: 1.2rem;" title="Создать группу"></i>
                     </div>
                     <div style="overflow-y:auto; flex:1;">
-                        <div id="chat-list">
-                            <div class="item active" id="global-chat" data-room="#Global">
-                                <div class="ava" style="background:#555"><i class="fas fa-globe"></i></div>
-                                <div class="chat-info"><span>Общий чат</span><small>Сервер</small></div>
-                            </div>
-                        </div>
+                        <div id="chat-list-container"></div>
+                        
                         <div style="padding: 15px 10px 5px; color:#666; font-size:0.75rem; text-transform:uppercase; font-weight:bold;">Пользователи</div>
                         <div id="user-list"></div>
                     </div>
@@ -66,9 +94,7 @@
                             <small id="chat-status" style="font-weight: 500; color:#888; font-size: 0.75rem;"></small>
                         </div>
                     </div>
-                    
                     <div class="msgs" id="msgs"></div>
-                    
                     <div id="reply-bar" style="display:none; padding: 10px 20px; background: var(--panel); border-bottom:1px solid var(--border);">
                         <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
                             <div style="border-left:3px solid var(--primary); padding-left:10px;">
@@ -78,7 +104,6 @@
                             <i class="fas fa-times" style="font-size:1.2rem; color:#888; cursor:pointer;" id="cancel-reply-btn"></i>
                         </div>
                     </div>
-
                     <div class="input-area">
                         <div class="input-area-controls">
                             <input type="text" id="msg-input" placeholder="Написать сообщение..." autocomplete="off">
@@ -90,30 +115,6 @@
         </div>
     </div>
     
-    <div class="modal" id="profile-modal">
-        <div class="modal-content">
-            <button class="close-btn" data-close="profile-modal">&times;</button>
-            <button class="modal-action-btn" id="edit-icon-btn" title="Редактировать"><i class="fas fa-pencil-alt"></i></button>
-            <div style="text-align:center; margin:10px 0;">
-                <div id="self-avatar-preview" class="ava" style="width:80px; height:80px; font-size:3rem; margin:0 auto;"><span></span></div>
-            </div>
-            <div id="profile-view">
-                <h3 id="view-nickname" style="text-align:center"></h3>
-                <p id="view-handle" style="text-align:center; color:#888"></p>
-                <p id="view-bio" style="text-align:center; color:#ccc; font-style:italic; margin-bottom:15px;"></p>
-            </div>
-            <form id="profile-edit-form" style="display:none">
-                <div class="form-group"><label>Никнейм</label><input type="text" id="edit-nickname" class="view-input"></div>
-                <div class="form-group"><label>@Handle</label><input type="text" id="edit-handle" class="view-input"></div>
-                <div class="form-group"><label>О себе</label><textarea id="edit-bio" class="view-input" rows="3"></textarea></div>
-                <h4 style="margin-top:15px; color:#ccc; font-size:0.9rem;">Цвет и Аватар</h4>
-                <div class="picker-grid" id="edit-color-picker"></div>
-                <div class="picker-grid" id="edit-emoji-picker"></div>
-                <button type="submit" class="primary-btn">Сохранить</button>
-            </form>
-        </div>
-    </div>
-
     <div class="modal" id="view-user-modal">
         <div class="modal-content">
             <button class="close-btn" data-close="view-user-modal">&times;</button>
@@ -134,6 +135,19 @@
             <div class="picker-grid" id="theme-picker"></div>
         </div>
     </div>
+
+    <div class="modal" id="create-group-modal">
+        <div class="modal-content">
+            <button class="close-btn" data-close="create-group-modal">&times;</button>
+            <h3>Создать группу</h3>
+            <input type="text" id="group-name-input" class="view-input" placeholder="Название группы" style="margin-bottom:15px; width:100%; padding:10px; border-radius:10px; background:#333; border:1px solid #444; color:white;">
+            <p style="font-size:0.9rem; color:#888; margin-bottom:10px;">Выберите участников:</p>
+            <div class="user-select-list" id="group-user-select">
+                </div>
+            <button class="primary-btn" id="submit-group-btn">Создать</button>
+        </div>
+    </div>
+
     <script src="/static/js/chat.js"></script>
 </body>
 </html>

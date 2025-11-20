@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pramien Admin Login</title>
+    <style>
+        body {
+            background: #000; color: #fff; font-family: -apple-system, sans-serif;
+            display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;
+        }
+        .login-card {
+            background: #111; border: 1px solid #333; padding: 40px; border-radius: 20px;
+            width: 100%; max-width: 400px; text-align: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+        h1 { margin-bottom: 5px; }
+        p { color: #666; margin-bottom: 30px; }
+        input {
+            width: 100%; background: #222; border: 1px solid #444; color: white;
+            padding: 12px; border-radius: 10px; margin-bottom: 15px; font-size: 1rem; box-sizing: border-box;
+        }
+        button {
+            width: 100%; background: #ff3b30; color: white; padding: 12px;
+            border: none; border-radius: 10px; font-size: 1rem; font-weight: bold; cursor: pointer;
+        }
+        button:hover { background: #ff5e55; }
+        .error { color: #ff3b30; margin-bottom: 15px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Pramien <span style="color:#ff3b30">Admin</span></h1>
+        <p>{% if allow_register %}Создание Супер-Админа{% else %}Вход в панель{% endif %}</p>
+        
+        <div id="error-msg" class="error"></div>
+        
+        <form id="admin-form">
+            <input type="text" id="username" placeholder="Логин" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <button type="submit">{% if allow_register %}Создать и Войти{% else %}Войти{% endif %}</button>
+        </form>
+    </div>
+
+    <script>
+        const isRegister = {{ 'true' if allow_register else 'false' }};
+        document.getElementById('admin-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            
+            const res = await fetch('/api/admin/login', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username: u, password: p, is_register: isRegister })
+            });
+            const d = await res.json();
+            if(d.success) window.location.reload();
+            else {
+                const err = document.getElementById('error-msg');
+                err.textContent = d.error; err.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

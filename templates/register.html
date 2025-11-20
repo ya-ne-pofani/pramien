@@ -1,16 +1,38 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head><meta charset="UTF-8"><title>Регистрация</title><link rel="stylesheet" href="/static/css/auth.css"></head>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Регистрация - Pramien</title>
+    <link rel="stylesheet" href="/static/css/auth.css">
+</head>
 <body>
     <div class="auth-container">
         <div class="auth-card">
-            <h1 class="fly-text">Регистрация</h1>
-            <form id="reg-form">
-                <div class="form-group"><label>Логин</label><input type="text" name="username" required></div>
-                <div class="form-group"><label>Пароль</label><input type="password" name="password" required></div>
-                <button type="submit" class="auth-btn">Создать</button>
+            <h1>Создать аккаунт</h1>
+            <p class="subtitle">Присоединяйся к Pramien</p>
+            
+            <div class="error-msg" id="error-box"></div>
+
+            <form id="register-form">
+                <div class="input-group">
+                    <input type="text" id="username" placeholder="Логин (для входа)" required>
+                </div>
+                <div class="input-group">
+                    <input type="text" id="nickname" placeholder="Имя (Никнейм)" required>
+                </div>
+                <div class="input-group">
+                    <input type="text" id="handle" placeholder="@handle (уникальный ID)" required>
+                </div>
+                <div class="input-group">
+                    <input type="password" id="password" placeholder="Пароль" required>
+                </div>
+                <button type="submit" class="auth-btn">Создать аккаунт</button>
             </form>
-            <div class="auth-footer">Есть аккаунт? <a href="/login">Войти</a></div>
+
+            <div class="auth-footer">
+                <p>Уже есть аккаунт? <a href="/login">Войти</a></p>
+            </div>
         </div>
     </div>
     <script src="/static/js/auth.js"></script>
