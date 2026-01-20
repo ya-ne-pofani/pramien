@@ -79,7 +79,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 let icon = 'fa-star'; let cls = '';
                 if (t.name === 'Verified') { icon = 'fa-check-circle'; cls = 'verified'; }
                 else if (t.name === 'Developer') { icon = 'fa-hammer'; cls = 'dev'; }
-                else if (t.emoji) icon = `fa-${t.emoji}`;
+                else if (t.emoji && /^[a-z0-9-]+$/.test(t.emoji)) {
+                    // Validate emoji is safe CSS class name (alphanumeric and hyphens only)
+                    icon = `fa-${t.emoji}`;
+                }
                 
                 const badge = document.createElement('span');
                 badge.className = `badge ${cls}`;
@@ -93,27 +96,25 @@ document.addEventListener('DOMContentLoaded', () => {
         return container;
     }
     function getTagsHtml(tags) {
-        // Legacy function for backward compatibility
-        if (!tags || !Array.isArray(tags)) return '';
-        tags.sort((a,b) => (b.is_special ? 1 : 0) - (a.is_special ? 1 : 0));
-        let html = '';
+        // DEPRECATED: Use createTagElements() instead to prevent XSS
+        console.warn("getTagsHtml is deprecated, use createTagElements instead");
+        return createTagElements(tags);
+    }
+    function createPillElements(tags) {
+        const container = document.createElement('div');
+        if (!tags || !Array.isArray(tags)) return container;
         tags.forEach(t => {
-            if (t.is_special) {
-                let icon = 'fa-star'; let cls = '';
-                if (t.name === 'Verified') { icon = 'fa-check-circle'; cls = 'verified'; }
-                else if (t.name === 'Developer') { icon = 'fa-hammer'; cls = 'dev'; }
-                else if (t.emoji) icon = `fa-${t.emoji}`;
-                // Browser auto-escapes attribute values
-                html += `<span class="badge ${cls}" title="${t.name}"><i class="fas ${icon}"></i></span>`;
+            if (!t.is_special) {
+                const pill = document.createElement('div');
+                pill.className = 'tag-pill';
+                const emojiSpan = document.createElement('span');
+                emojiSpan.textContent = t.emoji || '';
+                pill.appendChild(emojiSpan);
+                pill.appendChild(document.createTextNode(' ' + t.name));
+                container.appendChild(pill);
             }
         });
-        return html;
-    }
-    function getPillsHtml(tags) {
-        if (!tags || !Array.isArray(tags)) return '';
-        let html = '';
-        tags.forEach(t => { if (!t.is_special) html += `<div class="tag-pill"><span>${t.emoji || ''}</span> ${t.name}</div>`; });
-        return html;
+        return container;
     }
     function updateUnread() {
         const total = Object.values(unreadCounts).reduce((a,b)=>a+b,0);
@@ -130,8 +131,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const d = await res.json();
             if (d.success) {
                 const p = d.profile; const tags = d.tags;
-                document.getElementById('user-view-nickname').innerHTML = `${p.nickname} ${getTagsHtml(tags)}`;
-                document.getElementById('user-view-tags').innerHTML = getPillsHtml(tags);
+                const nicknameEl = document.getElementById('user-view-nickname');
+                nicknameEl.textContent = p.nickname + ' ';
+                nicknameEl.appendChild(createTagElements(tags));
+                
+                const tagsContainer = document.getElementById('user-view-tags');
+                tagsContainer.innerHTML = '';
+                tagsContainer.appendChild(createPillElements(tags));
+                
                 document.getElementById('user-view-handle').textContent = `@${p.handle}`;
                 document.getElementById('user-view-bio').textContent = p.bio || 'Нет информации';
                 const ava = document.getElementById('user-view-avatar'); 
@@ -153,7 +160,10 @@ document.addEventListener('DOMContentLoaded', () => {
         else currentRoomData = data;
         window.currentRoomData = currentRoomData; 
 
-        document.getElementById('chat-title').innerHTML = `${currentRoomData.nickname || currentRoomData.name} ${getTagsHtml(currentRoomData.tags)}`;
+        const chatTitle = document.getElementById('chat-title');
+        chatTitle.textContent = currentRoomData.nickname || currentRoomData.name;
+        chatTitle.appendChild(document.createTextNode(' '));
+        chatTitle.appendChild(createTagElements(currentRoomData.tags));
         document.getElementById('msgs').innerHTML = '';
         
         const actualAva = document.getElementById('header-avatar');
@@ -233,9 +243,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createItem(d) {
-        const el = document.createElement('div'); el.className = 'item'; el.dataset.room = d.room;
-        const tagsH = getTagsHtml(d.tags);
-        el.innerHTML = `<div class="ava" style="background:${d.avatar_color}">${d.avatar_emoji}</div><div class="chat-info"><span>${d.name||d.nickname} ${tagsH}</span><small>${d.last_msg||''}</small></div><span class="item-badge"></span>`;
+        const el = document.createElement('div'); 
+        el.className = 'item'; 
+        el.dataset.room = d.room;
+        
+        const ava = document.createElement('div');
+        ava.className = 'ava';
+        ava.style.background = d.avatar_color;
+        ava.textContent = d.avatar_emoji;
+        el.appendChild(ava);
+        
+        const chatInfo = document.createElement('div');
+        chatInfo.className = 'chat-info';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = d.name || d.nickname;
+        nameSpan.appendChild(document.createTextNode(' '));
+        nameSpan.appendChild(createTagElements(d.tags));
+        chatInfo.appendChild(nameSpan);
+        
+        const lastMsg = document.createElement('small');
+        lastMsg.textContent = d.last_msg || '';
+        chatInfo.appendChild(lastMsg);
+        
+        el.appendChild(chatInfo);
+        
+        const badge = document.createElement('span');
+        badge.className = 'item-badge';
+        el.appendChild(badge);
+        
         el.onclick = () => window.openChat(d.room, d);
         return el;
     }
@@ -327,7 +363,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const replyBtn = document.createElement('button'); 
         replyBtn.className = 'reply-btn'; 
-        replyBtn.innerHTML = '<i class="fas fa-reply"></i>';
+        const replyIcon = document.createElement('i');
+        replyIcon.className = 'fas fa-reply';
+        replyBtn.appendChild(replyIcon);
         replyBtn.onclick = () => {
             replyData = {
                 content: d.content.substring(0,50) + '...', 
@@ -398,7 +436,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const row = document.createElement('div'); 
                 row.id = 'typing-row'; 
                 row.className = 'msg-row other';
-                row.innerHTML = `<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
+                
+                const typingBubble = document.createElement('div');
+                typingBubble.className = 'typing-bubble';
+                for (let i = 0; i < 3; i++) {
+                    const dot = document.createElement('div');
+                    dot.className = 'dot';
+                    typingBubble.appendChild(dot);
+                }
+                row.appendChild(typingBubble);
+                
                 document.getElementById('msgs').appendChild(row);
                 document.getElementById('msgs').scrollTop = document.getElementById('msgs').scrollHeight;
             }
@@ -493,8 +540,14 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('popover-edit').style.display = 'none';
             
             // Заполняем данные
-            document.getElementById('pop-tags').innerHTML = getPillsHtml(userData.tags);
-            document.getElementById('pop-nick').innerHTML = `${userData.nickname} ${getTagsHtml(userData.tags)}`;
+            const popTags = document.getElementById('pop-tags');
+            popTags.innerHTML = '';
+            popTags.appendChild(createPillElements(userData.tags));
+            
+            const popNick = document.getElementById('pop-nick');
+            popNick.textContent = userData.nickname + ' ';
+            popNick.appendChild(createTagElements(userData.tags));
+            
             document.getElementById('pop-bio').textContent = userData.bio || 'Нет статуса';
             document.getElementById('pop-handle').textContent = `@${userData.handle}`;
             document.getElementById('pop-ava').style.backgroundColor = userData.color;
