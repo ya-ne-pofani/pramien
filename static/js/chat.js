@@ -10,6 +10,13 @@ window.closeChat = function() {
 window.showUserProfile = null;
 window.openChat = null; 
 
+// HELPER: Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     
     // 1. НАДЕЖНОЕ ЧТЕНИЕ ДАННЫХ
@@ -229,13 +236,20 @@ document.addEventListener('DOMContentLoaded', () => {
         let nameHtml = '';
         if (!isSelf && (window.currentRoom === '#Global' || currentRoomData.type === 'group')) {
             const senderTags = d.sender_tags || [];
+            const escapedUsername = escapeHtml(d.sender_username);
+            const escapedNickname = escapeHtml(d.sender_nickname || 'User');
             nameHtml = `<div style="font-size:0.7rem;font-weight:bold;margin-bottom:3px;color:#bbb;display:flex;align-items:center; cursor:pointer;" 
-                onclick="window.showUserProfile('${d.sender_username}')">
-                ${d.sender_nickname || 'User'} ${getTagsHtml(senderTags)}
+                onclick="window.showUserProfile('${escapedUsername}')">
+                ${escapedNickname} ${getTagsHtml(senderTags)}
             </div>`;
         }
         
-        let replyHtml = d.reply_content ? `<div class="reply-ref"><b>${d.reply_nickname || 'Unknown'}</b>: ${d.reply_content}</div>` : '';
+        let replyHtml = '';
+        if (d.reply_content) {
+            const escapedReplyNickname = escapeHtml(d.reply_nickname || 'Unknown');
+            const escapedReplyContent = escapeHtml(d.reply_content);
+            replyHtml = `<div class="reply-ref"><b>${escapedReplyNickname}</b>: ${escapedReplyContent}</div>`;
+        }
         
         if(!isSelf) {
             const ava = document.createElement('div'); 
@@ -253,14 +267,29 @@ document.addEventListener('DOMContentLoaded', () => {
         const timestamp = d.timestamp || Date.now() / 1000;
         const time = new Date(timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         
-        bubble.innerHTML = `
-            ${replyHtml}
-            ${nameHtml}
-            <div>${d.content}</div>
-            <div class="msg-meta">
-                <span>${time}</span>
-            </div>
-        `;
+        // Create elements safely without innerHTML for user content
+        if (replyHtml) {
+            const replyDiv = document.createElement('div');
+            replyDiv.innerHTML = replyHtml;
+            bubble.appendChild(replyDiv);
+        }
+        
+        if (nameHtml) {
+            const nameDiv = document.createElement('div');
+            nameDiv.innerHTML = nameHtml;
+            bubble.appendChild(nameDiv);
+        }
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.textContent = d.content; // Use textContent to prevent XSS
+        bubble.appendChild(contentDiv);
+        
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'msg-meta';
+        const timeSpan = document.createElement('span');
+        timeSpan.textContent = time;
+        metaDiv.appendChild(timeSpan);
+        bubble.appendChild(metaDiv);
         
         const replyBtn = document.createElement('button'); 
         replyBtn.className = 'reply-btn'; 

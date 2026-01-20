@@ -6,11 +6,12 @@ import datetime
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
+from markupsafe import escape
 import uuid
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret_key_pramien_v2'
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev_key_change_in_production')
+socketio = SocketIO(app, cors_allowed_origins=os.environ.get('CORS_ORIGINS', '*').split(','))
 
 # --- DATABASE ---
 def get_db_connection():
@@ -192,7 +193,8 @@ def admin_assign_tag():
     try:
         conn.execute('INSERT INTO user_tags (user_id, tag_id) VALUES (?, ?)', (d['user_id'], tag_id))
         conn.commit()
-    except: pass
+    except sqlite3.IntegrityError:
+        pass  # Tag already assigned
     conn.close()
     return jsonify({'success': True})
 
@@ -237,6 +239,25 @@ def update_profile():
     data = request.json
     username = session['user']
     
+    # Validate input
+    nickname = data.get('nickname', '').strip()
+    handle = data.get('handle', '').strip()
+    bio = data.get('bio', '').strip()
+    color = data.get('color', '#007aff')
+    emoji = data.get('emoji', '👤')
+    
+    if not nickname or len(nickname) > 50:
+        return jsonify({'success': False, 'message': 'Никнейм должен быть от 1 до 50 символов'}), 400
+    
+    if not handle or len(handle) > 30:
+        return jsonify({'success': False, 'message': 'Handle должен быть от 1 до 30 символов'}), 400
+    
+    if len(bio) > 500:
+        return jsonify({'success': False, 'message': 'Био не должно превышать 500 символов'}), 400
+    
+    if len(emoji) > 10:
+        return jsonify({'success': False, 'message': 'Некорректный эмодзи'}), 400
+    
     try:
         conn = get_db_connection()
         
@@ -245,14 +266,7 @@ def update_profile():
             UPDATE users 
             SET nickname = ?, handle = ?, bio = ?, avatar_color = ?, avatar_emoji = ?
             WHERE username = ?
-        ''', (
-            data.get('nickname'),
-            data.get('handle'),
-            data.get('bio', ''),
-            data.get('color'),
-            data.get('emoji'),
-            username
-        ))
+        ''', (nickname, handle, bio, color, emoji, username))
         
         conn.commit()
         conn.close()
@@ -260,9 +274,11 @@ def update_profile():
         return jsonify({'success': True, 'message': 'Profile updated'})
     
     except sqlite3.IntegrityError:
+        conn.close()
         return jsonify({'success': False, 'message': 'Handle уже занят'}), 409
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
+        conn.close()
+        return jsonify({'success': False, 'message': 'Ошибка при обновлении профиля'}), 500
 
 # --- AUTH API ---
 @app.route('/api/auth/login', methods=['POST'])
@@ -291,8 +307,12 @@ def api_register():
         conn.commit()
         conn.close()
         return jsonify({'success': True, 'redirect': '/login'})
-    except:
+    except sqlite3.IntegrityError:
+        conn.close()
         return jsonify({'success': False, 'error': 'Логин или handle уже занят'}), 409
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Ошибка при регистрации'}), 500
 
 # --- SOCKET.IO ---
 @socketio.on('join')
@@ -302,9 +322,21 @@ def on_join(data):
 @socketio.on('send_message')
 def handle_message(data):
     if 'user' not in session: return
-    room, content = data['room'], data['content']
+    room, content = data.get('room'), data.get('content', '').strip()
+    
+    # Validate message content
+    if not content or len(content) > 5000:
+        return
+    
     sender = session['user']
     conn = get_db_connection()
+    
+    # Check if user is banned
+    ban = conn.execute('SELECT * FROM bans WHERE username = ? AND expires_at > ?', (sender, time.time())).fetchone()
+    if ban:
+        conn.close()
+        return
+    
     cursor = conn.execute('INSERT INTO messages (room, sender_username, content, timestamp) VALUES (?, ?, ?, ?)', 
                          (room, sender, content, time.time()))
     conn.commit()
@@ -337,4 +369,5 @@ def handle_history(data):
     emit('message_history', {'room': data['room'], 'messages': res})
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=5000)
