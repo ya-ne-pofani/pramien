@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 nicknameEl.appendChild(createTagElements(tags));
                 
                 const tagsContainer = document.getElementById('user-view-tags');
-                tagsContainer.innerHTML = '';
+                tagsContainer.textContent = ''; // Clear content safely
                 tagsContainer.appendChild(createPillElements(tags));
                 
                 document.getElementById('user-view-handle').textContent = `@${p.handle}`;
@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chatTitle.textContent = currentRoomData.nickname || currentRoomData.name;
         chatTitle.appendChild(document.createTextNode(' '));
         chatTitle.appendChild(createTagElements(currentRoomData.tags));
-        document.getElementById('msgs').innerHTML = '';
+        document.getElementById('msgs').textContent = ''; // Clear content safely
         
         const actualAva = document.getElementById('header-avatar');
         const actualInfo = document.getElementById('header-info-box');
@@ -222,8 +222,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function loadChats() {
         fetch('/api/chats').then(r=>r.json()).then(data => {
-            const cc = document.getElementById('chat-list-container'); cc.innerHTML = '';
-            const uc = document.getElementById('user-list'); uc.innerHTML = '';
+            const cc = document.getElementById('chat-list-container'); cc.textContent = ''; // Clear content safely
+            const uc = document.getElementById('user-list'); uc.textContent = ''; // Clear content safely
             allUsersCache = data.users;
             data.chats.forEach(c => cc.appendChild(createItem(c)));
             data.users.forEach(u => { if (!data.chats.find(c => c.room === u.room)) uc.appendChild(createItem({...u, type: 'dm'})); });
@@ -529,7 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Заполняем данные
             const popTags = document.getElementById('pop-tags');
-            popTags.innerHTML = '';
+            popTags.textContent = ''; // Clear content safely
             popTags.appendChild(createPillElements(userData.tags));
             
             const popNick = document.getElementById('pop-nick');
