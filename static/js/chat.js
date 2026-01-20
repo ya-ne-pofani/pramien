@@ -88,13 +88,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         return container;
     }
-    // DEPRECATED: Legacy function removed - use createTagElements() instead
-    function getTagsHtml(tags) {
-        console.warn("getTagsHtml is deprecated, use createTagElements instead");
-        const temp = document.createElement('div');
-        temp.appendChild(createTagElements(tags));
-        return temp.innerHTML;
-    }
     function createPillElements(tags) {
         const container = document.createElement('div');
         if (!tags || !Array.isArray(tags)) return container;
