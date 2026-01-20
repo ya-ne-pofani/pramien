@@ -63,26 +63,46 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) { console.warn("Animation failed", e); }
 
     // 4. ХЕЛПЕРЫ (Теги, Счетчик)
-    function getTagsHtml(tags) {
-        if (!tags || !Array.isArray(tags)) return '';
+    function createTagElements(tags) {
+        const container = document.createElement('span');
+        if (!tags || !Array.isArray(tags)) return container;
         tags.sort((a,b) => (b.is_special ? 1 : 0) - (a.is_special ? 1 : 0));
-        let html = '';
         tags.forEach(t => {
             if (t.is_special) {
                 let icon = 'fa-star'; let cls = '';
                 if (t.name === 'Verified') { icon = 'fa-check-circle'; cls = 'verified'; }
                 else if (t.name === 'Developer') { icon = 'fa-hammer'; cls = 'dev'; }
-                else if (t.emoji) icon = `fa-${t.emoji}`;
-                html += `<span class="badge ${cls}" title="${t.name}"><i class="fas ${icon}"></i></span>`;
+                else if (t.emoji && /^[a-z0-9-]+$/.test(t.emoji)) {
+                    // Validate emoji is safe CSS class name (alphanumeric and hyphens only)
+                    icon = `fa-${t.emoji}`;
+                }
+                
+                const badge = document.createElement('span');
+                badge.className = `badge ${cls}`;
+                badge.title = t.name; // Browser handles escaping of attributes
+                const iconElement = document.createElement('i');
+                iconElement.className = `fas ${icon}`;
+                badge.appendChild(iconElement);
+                container.appendChild(badge);
             }
         });
-        return html;
+        return container;
     }
-    function getPillsHtml(tags) {
-        if (!tags || !Array.isArray(tags)) return '';
-        let html = '';
-        tags.forEach(t => { if (!t.is_special) html += `<div class="tag-pill"><span>${t.emoji || ''}</span> ${t.name}</div>`; });
-        return html;
+    function createPillElements(tags) {
+        const container = document.createElement('div');
+        if (!tags || !Array.isArray(tags)) return container;
+        tags.forEach(t => {
+            if (!t.is_special) {
+                const pill = document.createElement('div');
+                pill.className = 'tag-pill';
+                const emojiSpan = document.createElement('span');
+                emojiSpan.textContent = t.emoji || '';
+                pill.appendChild(emojiSpan);
+                pill.appendChild(document.createTextNode(' ' + t.name));
+                container.appendChild(pill);
+            }
+        });
+        return container;
     }
     function updateUnread() {
         const total = Object.values(unreadCounts).reduce((a,b)=>a+b,0);
@@ -99,8 +119,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const d = await res.json();
             if (d.success) {
                 const p = d.profile; const tags = d.tags;
-                document.getElementById('user-view-nickname').innerHTML = `${p.nickname} ${getTagsHtml(tags)}`;
-                document.getElementById('user-view-tags').innerHTML = getPillsHtml(tags);
+                const nicknameEl = document.getElementById('user-view-nickname');
+                nicknameEl.textContent = p.nickname + ' ';
+                nicknameEl.appendChild(createTagElements(tags));
+                
+                const tagsContainer = document.getElementById('user-view-tags');
+                tagsContainer.textContent = ''; // Clear content safely
+                tagsContainer.appendChild(createPillElements(tags));
+                
                 document.getElementById('user-view-handle').textContent = `@${p.handle}`;
                 document.getElementById('user-view-bio').textContent = p.bio || 'Нет информации';
                 const ava = document.getElementById('user-view-avatar'); 
@@ -122,8 +148,11 @@ document.addEventListener('DOMContentLoaded', () => {
         else currentRoomData = data;
         window.currentRoomData = currentRoomData; 
 
-        document.getElementById('chat-title').innerHTML = `${currentRoomData.nickname || currentRoomData.name} ${getTagsHtml(currentRoomData.tags)}`;
-        document.getElementById('msgs').innerHTML = '';
+        const chatTitle = document.getElementById('chat-title');
+        chatTitle.textContent = currentRoomData.nickname || currentRoomData.name;
+        chatTitle.appendChild(document.createTextNode(' '));
+        chatTitle.appendChild(createTagElements(currentRoomData.tags));
+        document.getElementById('msgs').textContent = ''; // Clear content safely
         
         const actualAva = document.getElementById('header-avatar');
         const actualInfo = document.getElementById('header-info-box');
@@ -193,8 +222,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function loadChats() {
         fetch('/api/chats').then(r=>r.json()).then(data => {
-            const cc = document.getElementById('chat-list-container'); cc.innerHTML = '';
-            const uc = document.getElementById('user-list'); uc.innerHTML = '';
+            const cc = document.getElementById('chat-list-container'); cc.textContent = ''; // Clear content safely
+            const uc = document.getElementById('user-list'); uc.textContent = ''; // Clear content safely
             allUsersCache = data.users;
             data.chats.forEach(c => cc.appendChild(createItem(c)));
             data.users.forEach(u => { if (!data.chats.find(c => c.room === u.room)) uc.appendChild(createItem({...u, type: 'dm'})); });
@@ -202,9 +231,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createItem(d) {
-        const el = document.createElement('div'); el.className = 'item'; el.dataset.room = d.room;
-        const tagsH = getTagsHtml(d.tags);
-        el.innerHTML = `<div class="ava" style="background:${d.avatar_color}">${d.avatar_emoji}</div><div class="chat-info"><span>${d.name||d.nickname} ${tagsH}</span><small>${d.last_msg||''}</small></div><span class="item-badge"></span>`;
+        const el = document.createElement('div'); 
+        el.className = 'item'; 
+        el.dataset.room = d.room;
+        
+        const ava = document.createElement('div');
+        ava.className = 'ava';
+        ava.style.background = d.avatar_color;
+        ava.textContent = d.avatar_emoji;
+        el.appendChild(ava);
+        
+        const chatInfo = document.createElement('div');
+        chatInfo.className = 'chat-info';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = d.name || d.nickname;
+        nameSpan.appendChild(document.createTextNode(' '));
+        nameSpan.appendChild(createTagElements(d.tags));
+        chatInfo.appendChild(nameSpan);
+        
+        const lastMsg = document.createElement('small');
+        lastMsg.textContent = d.last_msg || '';
+        chatInfo.appendChild(lastMsg);
+        
+        el.appendChild(chatInfo);
+        
+        const badge = document.createElement('span');
+        badge.className = 'item-badge';
+        el.appendChild(badge);
+        
         el.onclick = () => window.openChat(d.room, d);
         return el;
     }
@@ -226,16 +281,37 @@ document.addEventListener('DOMContentLoaded', () => {
         const isSelf = d.sender_username === userData.username;
         row.className = `msg-row ${isSelf ? 'self' : 'other'}`;
         
-        let nameHtml = '';
+        let nameElement = null;
         if (!isSelf && (window.currentRoom === '#Global' || currentRoomData.type === 'group')) {
             const senderTags = d.sender_tags || [];
-            nameHtml = `<div style="font-size:0.7rem;font-weight:bold;margin-bottom:3px;color:#bbb;display:flex;align-items:center; cursor:pointer;" 
-                onclick="window.showUserProfile('${d.sender_username}')">
-                ${d.sender_nickname || 'User'} ${getTagsHtml(senderTags)}
-            </div>`;
+            nameElement = document.createElement('div');
+            nameElement.style.fontSize = '0.7rem';
+            nameElement.style.fontWeight = 'bold';
+            nameElement.style.marginBottom = '3px';
+            nameElement.style.color = '#bbb';
+            nameElement.style.display = 'flex';
+            nameElement.style.alignItems = 'center';
+            nameElement.style.cursor = 'pointer';
+            
+            const nameText = document.createTextNode(d.sender_nickname || 'User');
+            nameElement.appendChild(nameText);
+            nameElement.appendChild(document.createTextNode(' '));
+            nameElement.appendChild(createTagElements(senderTags));
+            nameElement.addEventListener('click', () => window.showUserProfile(d.sender_username));
         }
         
-        let replyHtml = d.reply_content ? `<div class="reply-ref"><b>${d.reply_nickname || 'Unknown'}</b>: ${d.reply_content}</div>` : '';
+        let replyElement = null;
+        if (d.reply_content) {
+            replyElement = document.createElement('div');
+            replyElement.className = 'reply-ref';
+            const replyBold = document.createElement('b');
+            replyBold.textContent = d.reply_nickname || 'Unknown';
+            replyElement.appendChild(replyBold);
+            replyElement.appendChild(document.createTextNode(': '));
+            const replyText = document.createElement('span');
+            replyText.textContent = d.reply_content;
+            replyElement.appendChild(replyText);
+        }
         
         if(!isSelf) {
             const ava = document.createElement('div'); 
@@ -253,18 +329,31 @@ document.addEventListener('DOMContentLoaded', () => {
         const timestamp = d.timestamp || Date.now() / 1000;
         const time = new Date(timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         
-        bubble.innerHTML = `
-            ${replyHtml}
-            ${nameHtml}
-            <div>${d.content}</div>
-            <div class="msg-meta">
-                <span>${time}</span>
-            </div>
-        `;
+        // Create elements safely using DOM methods
+        if (replyElement) {
+            bubble.appendChild(replyElement);
+        }
+        
+        if (nameElement) {
+            bubble.appendChild(nameElement);
+        }
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.textContent = d.content; // Use textContent to prevent XSS
+        bubble.appendChild(contentDiv);
+        
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'msg-meta';
+        const timeSpan = document.createElement('span');
+        timeSpan.textContent = time;
+        metaDiv.appendChild(timeSpan);
+        bubble.appendChild(metaDiv);
         
         const replyBtn = document.createElement('button'); 
         replyBtn.className = 'reply-btn'; 
-        replyBtn.innerHTML = '<i class="fas fa-reply"></i>';
+        const replyIcon = document.createElement('i');
+        replyIcon.className = 'fas fa-reply';
+        replyBtn.appendChild(replyIcon);
         replyBtn.onclick = () => {
             replyData = {
                 content: d.content.substring(0,50) + '...', 
@@ -335,7 +424,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const row = document.createElement('div'); 
                 row.id = 'typing-row'; 
                 row.className = 'msg-row other';
-                row.innerHTML = `<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
+                
+                const typingBubble = document.createElement('div');
+                typingBubble.className = 'typing-bubble';
+                for (let i = 0; i < 3; i++) {
+                    const dot = document.createElement('div');
+                    dot.className = 'dot';
+                    typingBubble.appendChild(dot);
+                }
+                row.appendChild(typingBubble);
+                
                 document.getElementById('msgs').appendChild(row);
                 document.getElementById('msgs').scrollTop = document.getElementById('msgs').scrollHeight;
             }
@@ -430,8 +528,14 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('popover-edit').style.display = 'none';
             
             // Заполняем данные
-            document.getElementById('pop-tags').innerHTML = getPillsHtml(userData.tags);
-            document.getElementById('pop-nick').innerHTML = `${userData.nickname} ${getTagsHtml(userData.tags)}`;
+            const popTags = document.getElementById('pop-tags');
+            popTags.textContent = ''; // Clear content safely
+            popTags.appendChild(createPillElements(userData.tags));
+            
+            const popNick = document.getElementById('pop-nick');
+            popNick.textContent = userData.nickname + ' ';
+            popNick.appendChild(createTagElements(userData.tags));
+            
             document.getElementById('pop-bio').textContent = userData.bio || 'Нет статуса';
             document.getElementById('pop-handle').textContent = `@${userData.handle}`;
             document.getElementById('pop-ava').style.backgroundColor = userData.color;
