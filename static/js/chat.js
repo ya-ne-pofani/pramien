@@ -10,13 +10,6 @@ window.closeChat = function() {
 window.showUserProfile = null;
 window.openChat = null; 
 
-// HELPER: Escape HTML to prevent XSS
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 document.addEventListener('DOMContentLoaded', () => {
     
     // 1. НАДЕЖНОЕ ЧТЕНИЕ ДАННЫХ
@@ -95,10 +88,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         return container;
     }
+    // DEPRECATED: Legacy function removed - use createTagElements() instead
     function getTagsHtml(tags) {
-        // DEPRECATED: Use createTagElements() instead to prevent XSS
         console.warn("getTagsHtml is deprecated, use createTagElements instead");
-        return createTagElements(tags);
+        const temp = document.createElement('div');
+        temp.appendChild(createTagElements(tags));
+        return temp.innerHTML;
     }
     function createPillElements(tags) {
         const container = document.createElement('div');
