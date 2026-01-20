@@ -70,7 +70,30 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) { console.warn("Animation failed", e); }
 
     // 4. ХЕЛПЕРЫ (Теги, Счетчик)
+    function createTagElements(tags) {
+        const container = document.createElement('span');
+        if (!tags || !Array.isArray(tags)) return container;
+        tags.sort((a,b) => (b.is_special ? 1 : 0) - (a.is_special ? 1 : 0));
+        tags.forEach(t => {
+            if (t.is_special) {
+                let icon = 'fa-star'; let cls = '';
+                if (t.name === 'Verified') { icon = 'fa-check-circle'; cls = 'verified'; }
+                else if (t.name === 'Developer') { icon = 'fa-hammer'; cls = 'dev'; }
+                else if (t.emoji) icon = `fa-${t.emoji}`;
+                
+                const badge = document.createElement('span');
+                badge.className = `badge ${cls}`;
+                badge.title = t.name; // Browser handles escaping of attributes
+                const iconElement = document.createElement('i');
+                iconElement.className = `fas ${icon}`;
+                badge.appendChild(iconElement);
+                container.appendChild(badge);
+            }
+        });
+        return container;
+    }
     function getTagsHtml(tags) {
+        // Legacy function for backward compatibility
         if (!tags || !Array.isArray(tags)) return '';
         tags.sort((a,b) => (b.is_special ? 1 : 0) - (a.is_special ? 1 : 0));
         let html = '';
@@ -80,6 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (t.name === 'Verified') { icon = 'fa-check-circle'; cls = 'verified'; }
                 else if (t.name === 'Developer') { icon = 'fa-hammer'; cls = 'dev'; }
                 else if (t.emoji) icon = `fa-${t.emoji}`;
+                // Browser auto-escapes attribute values
                 html += `<span class="badge ${cls}" title="${t.name}"><i class="fas ${icon}"></i></span>`;
             }
         });
@@ -244,8 +268,11 @@ document.addEventListener('DOMContentLoaded', () => {
             nameElement.style.display = 'flex';
             nameElement.style.alignItems = 'center';
             nameElement.style.cursor = 'pointer';
-            nameElement.textContent = d.sender_nickname || 'User';
-            nameElement.innerHTML += ' ' + getTagsHtml(senderTags);
+            
+            const nameText = document.createTextNode(d.sender_nickname || 'User');
+            nameElement.appendChild(nameText);
+            nameElement.appendChild(document.createTextNode(' '));
+            nameElement.appendChild(createTagElements(senderTags));
             nameElement.addEventListener('click', () => window.showUserProfile(d.sender_username));
         }
         
