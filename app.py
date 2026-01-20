@@ -38,6 +38,11 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO tags (name, emoji, is_special, priority) VALUES ('Verified', 'check-circle', 1, 10)")
     c.execute("INSERT OR IGNORE INTO tags (name, emoji, is_special, priority) VALUES ('Developer', 'hammer', 1, 5)")
     
+    # Create indexes for better performance
+    c.execute("CREATE INDEX IF NOT EXISTS idx_messages_room_timestamp ON messages(room, timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_bans_username_expires ON bans(username, expires_at)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+    
     conn.commit()
     conn.close()
 
@@ -258,9 +263,8 @@ def update_profile():
     if len(emoji) > 10:
         return jsonify({'success': False, 'message': 'Некорректный эмодзи'}), 400
     
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
-        
         # Обновляем профиль пользователя
         conn.execute('''
             UPDATE users 
@@ -269,16 +273,14 @@ def update_profile():
         ''', (nickname, handle, bio, color, emoji, username))
         
         conn.commit()
-        conn.close()
-        
         return jsonify({'success': True, 'message': 'Profile updated'})
     
     except sqlite3.IntegrityError:
-        conn.close()
         return jsonify({'success': False, 'message': 'Handle уже занят'}), 409
     except Exception as e:
-        conn.close()
         return jsonify({'success': False, 'message': 'Ошибка при обновлении профиля'}), 500
+    finally:
+        conn.close()
 
 # --- AUTH API ---
 @app.route('/api/auth/login', methods=['POST'])
@@ -305,14 +307,13 @@ def api_register():
         conn.execute('INSERT INTO users (username, password, nickname, handle, avatar_color, avatar_emoji, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', 
                      (d['username'], generate_password_hash(d['password']), d['nickname'], d['handle'], '#007aff', '👤', time.time()))
         conn.commit()
-        conn.close()
         return jsonify({'success': True, 'redirect': '/login'})
     except sqlite3.IntegrityError:
-        conn.close()
         return jsonify({'success': False, 'error': 'Логин или handle уже занят'}), 409
     except Exception as e:
-        conn.close()
         return jsonify({'success': False, 'error': 'Ошибка при регистрации'}), 500
+    finally:
+        conn.close()
 
 # --- SOCKET.IO ---
 @socketio.on('join')

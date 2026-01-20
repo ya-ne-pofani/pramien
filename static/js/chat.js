@@ -233,22 +233,33 @@ document.addEventListener('DOMContentLoaded', () => {
         const isSelf = d.sender_username === userData.username;
         row.className = `msg-row ${isSelf ? 'self' : 'other'}`;
         
-        let nameHtml = '';
+        let nameElement = null;
         if (!isSelf && (window.currentRoom === '#Global' || currentRoomData.type === 'group')) {
             const senderTags = d.sender_tags || [];
-            const escapedUsername = escapeHtml(d.sender_username);
-            const escapedNickname = escapeHtml(d.sender_nickname || 'User');
-            nameHtml = `<div style="font-size:0.7rem;font-weight:bold;margin-bottom:3px;color:#bbb;display:flex;align-items:center; cursor:pointer;" 
-                onclick="window.showUserProfile('${escapedUsername}')">
-                ${escapedNickname} ${getTagsHtml(senderTags)}
-            </div>`;
+            nameElement = document.createElement('div');
+            nameElement.style.fontSize = '0.7rem';
+            nameElement.style.fontWeight = 'bold';
+            nameElement.style.marginBottom = '3px';
+            nameElement.style.color = '#bbb';
+            nameElement.style.display = 'flex';
+            nameElement.style.alignItems = 'center';
+            nameElement.style.cursor = 'pointer';
+            nameElement.textContent = d.sender_nickname || 'User';
+            nameElement.innerHTML += ' ' + getTagsHtml(senderTags);
+            nameElement.addEventListener('click', () => window.showUserProfile(d.sender_username));
         }
         
-        let replyHtml = '';
+        let replyElement = null;
         if (d.reply_content) {
-            const escapedReplyNickname = escapeHtml(d.reply_nickname || 'Unknown');
-            const escapedReplyContent = escapeHtml(d.reply_content);
-            replyHtml = `<div class="reply-ref"><b>${escapedReplyNickname}</b>: ${escapedReplyContent}</div>`;
+            replyElement = document.createElement('div');
+            replyElement.className = 'reply-ref';
+            const replyBold = document.createElement('b');
+            replyBold.textContent = d.reply_nickname || 'Unknown';
+            replyElement.appendChild(replyBold);
+            replyElement.appendChild(document.createTextNode(': '));
+            const replyText = document.createElement('span');
+            replyText.textContent = d.reply_content;
+            replyElement.appendChild(replyText);
         }
         
         if(!isSelf) {
@@ -267,17 +278,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const timestamp = d.timestamp || Date.now() / 1000;
         const time = new Date(timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         
-        // Create elements safely without innerHTML for user content
-        if (replyHtml) {
-            const replyDiv = document.createElement('div');
-            replyDiv.innerHTML = replyHtml;
-            bubble.appendChild(replyDiv);
+        // Create elements safely using DOM methods
+        if (replyElement) {
+            bubble.appendChild(replyElement);
         }
         
-        if (nameHtml) {
-            const nameDiv = document.createElement('div');
-            nameDiv.innerHTML = nameHtml;
-            bubble.appendChild(nameDiv);
+        if (nameElement) {
+            bubble.appendChild(nameElement);
         }
         
         const contentDiv = document.createElement('div');
